@@ -13,6 +13,8 @@ module Rails
 
       require_relative "credentials_command/diffing"
       include Diffing
+      require_relative "credentials_command/merging"
+      include Merging
 
       desc "edit", "Open the decrypted credentials in `$EDITOR` for editing"
       def edit
@@ -57,6 +59,60 @@ module Rails
         say credentials.content_path.read
       end
 
+      option :enroll, type: :boolean, default: false,
+        desc: "Enrolls project in credentials file merging"
+
+      option :disenroll, type: :boolean, default: false,
+        desc: "Disenrolls project from credentials file merging"
+
+      def merge(ours_path = nil, base_path = nil, theirs_path = nil,
+                real_file_path = nil)
+        if options[:disenroll] || options[:enroll]
+          require_application!
+          disenroll_project_from_credentials_merging if options[:disenroll]
+          enroll_project_in_credentials_merging if options[:enroll]
+        else
+          extract_environment_option_from_argument(default_environment: extract_environment_from_path(real_file_path))
+          require_application!
+
+          begin
+            ours_plain_path = create_decrypted_tempfile('ours', ours_path)
+            base_plain_path = create_decrypted_tempfile('base', base_path)
+            theirs_plain_path = create_decrypted_tempfile('theirs', theirs_path)
+
+            # https://git-scm.com/docs/git-merge-file
+            system <<~COMMAND
+              git merge-file \
+                "#{ours_plain_path.path}" \
+                "#{base_plain_path.path}" \
+                "#{theirs_plain_path.path}"
+            COMMAND
+            status = $CHILD_STATUS.exitstatus
+
+            # ActiveSupport::EncryptedFile is used instead of
+            # ActiveSupport::EncryptedConfiguration because the file may have
+            # git conflict markers, making it invalid yml
+            ActiveSupport::EncryptedFile.new(
+              content_path: ours_path,
+              key_path: key_path,
+              env_key: 'RAILS_MASTER_KEY',
+              raise_if_missing_key: Rails.application.config.require_master_key
+            ).write(ours_plain_path.tap(&:open).read)
+
+            if status.negative?
+              say "git merge-file exited with error status: #{status}"
+              exit status
+            elsif status.positive?
+              exit status
+            end
+          ensure
+            ours_plain_path&.close!
+            base_plain_path&.close!
+            theirs_plain_path&.close!
+          end
+        end
+      end
+
       private
         def config
           Rails.application.config.credentials
@@ -72,6 +128,14 @@ module Rails
 
         def credentials
           @credentials ||= Rails.application.encrypted(content_path, key_path: key_path)
+        end
+
+        def create_decrypted_tempfile(name, crypt_path)
+          content = credentials(crypt_path).read
+          Tempfile.new(name).tap do |plain_path|
+            plain_path.write(content)
+            plain_path.close
+          end
         end
 
         def ensure_encryption_key_has_been_added
