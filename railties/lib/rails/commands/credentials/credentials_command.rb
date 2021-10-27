@@ -101,10 +101,8 @@ module Rails
 
             if status.negative?
               say "git merge-file exited with error status: #{status}"
-              exit status
-            elsif status.positive?
-              exit status
             end
+            exit status
           ensure
             ours_plain_path&.close!
             base_plain_path&.close!

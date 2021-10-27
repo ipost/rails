@@ -1,9 +1,11 @@
 # frozen_string_literal: true
 
 module Rails::Command::CredentialsCommand::Merging # :nodoc:
+  DRIVER_NAME = 'rails_credentials'
+
   GITATTRIBUTES_ENTRY = <<~END
-    config/credentials/*.yml.enc merge=rails_credentials
-    config/credentials.yml.enc merge=rails_credentials
+    config/credentials/*.yml.enc merge=#{DRIVER_NAME}
+    config/credentials.yml.enc merge=#{DRIVER_NAME}
   END
 
   def enroll_project_in_credentials_merging
@@ -14,7 +16,6 @@ module Rails::Command::CredentialsCommand::Merging # :nodoc:
       configure_merging_driver
 
       say "Enrolled project in credentials file merging!"
-      say "Rails ensures the rails_credentials diff driver is set when running `credentials:edit`. See `credentials:help` for more."
     end
   end
 
@@ -35,20 +36,15 @@ module Rails::Command::CredentialsCommand::Merging # :nodoc:
       gitattributes.file? && gitattributes.read.include?(GITATTRIBUTES_ENTRY)
     end
 
-    def merging_driver_configured?
-      system "git config --get diff.rails_credentials.textconv", out: File::NULL
-    end
-
     def configure_merging_driver
       system <<~COMMAND
-        git config merge.rails_credentials.driver \
-          'bin/rails credentials:merge %A %O %B %P'
+        git config merge.#{DRIVER_NAME}.driver 'bin/rails credentials:merge %A %O %B %P'
       COMMAND
     end
 
     def remove_merging_driver
       system <<~COMMAND
-        git config --unset merge.rails_credentials.driver
+        git config --unset merge.#{DRIVER_NAME}.driver
       COMMAND
     end
 
