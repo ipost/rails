@@ -17,6 +17,14 @@ class GeneratedAttributeTest < Rails::Generators::TestCase
     Rails.application.config.active_record.belongs_to_required_by_default = @old_belongs_to_required_by_default
   end
 
+  def test_field_name_with_dangerous_attribute_raises_error
+    e = assert_raise Rails::Generators::Error do
+      create_generated_attribute :string, :save
+    end
+    message = "Could not generate field 'save', as it is already defined by Active Record."
+    assert_match message, e.message
+  end
+
   def test_field_type_returns_number_field
     assert_field_type :integer, :number_field
   end
@@ -133,6 +141,30 @@ class GeneratedAttributeTest < Rails::Generators::TestCase
       "Full name",
       create_generated_attribute(:string, "full_name").human_name
     )
+  end
+
+  def test_size_option_can_be_passed_to_string_text_and_binary
+    %w(text binary).each do |attribute_type|
+      generated_attribute = create_generated_attribute("#{attribute_type}{medium}")
+      assert_equal :medium, generated_attribute.attr_options[:size]
+    end
+  end
+
+  def test_size_option_raises_exception_when_passed_to_invalid_type
+    %w(integer string).each do |attribute_type|
+      e = assert_raise Rails::Generators::Error do
+        create_generated_attribute("#{attribute_type}{medium}")
+      end
+      message = "Could not generate field 'test' with unknown type '#{attribute_type}{medium}'"
+      assert_match message, e.message
+    end
+  end
+
+  def test_limit_option_can_be_passed_to_string_text_integer_and_binary
+    %w(string text binary integer).each do |attribute_type|
+      generated_attribute = create_generated_attribute("#{attribute_type}{65535}")
+      assert_equal 65535, generated_attribute.attr_options[:limit]
+    end
   end
 
   def test_reference_is_true

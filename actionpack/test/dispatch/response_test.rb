@@ -402,7 +402,7 @@ class ResponseTest < ActiveSupport::TestCase
   test "[response.to_a].flatten does not recurse infinitely" do
     Timeout.timeout(1) do # use a timeout to prevent it stalling indefinitely
       status, headers, body = [@response.to_a].flatten
-      assert_equal status, 200
+      assert_equal 200, status
       assert_equal headers, @response.headers
       assert_nil body
     end
@@ -616,5 +616,41 @@ class ResponseIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal('text/csv; header=present; charset="utf-16"', @response.content_type)
     assert_equal("text/csv; header=present", @response.media_type)
     assert_equal("utf-16", @response.charset)
+  end
+
+  test "response body with enumerator" do
+    @app = lambda { |env|
+      [
+        200,
+        { "Content-Type" => "text/plain" },
+        Enumerator.new { |enumerator| 10.times { |n| enumerator << n.to_s } }
+      ]
+    }
+    get "/"
+    assert_response :success
+
+    assert_equal("text/plain", @response.headers["Content-Type"])
+    assert_equal("text/plain", @response.content_type)
+    assert_equal("text/plain", @response.media_type)
+    assert_equal("utf-8", @response.charset)
+    assert_equal("0123456789", @response.body)
+  end
+
+  test "response body with lazy enumerator" do
+    @app = lambda { |env|
+      [
+        200,
+        { "Content-Type" => "text/plain" },
+        (0..10).lazy
+      ]
+    }
+    get "/"
+    assert_response :success
+
+    assert_equal("text/plain", @response.headers["Content-Type"])
+    assert_equal("text/plain", @response.content_type)
+    assert_equal("text/plain", @response.media_type)
+    assert_equal("utf-8", @response.charset)
+    assert_equal("012345678910", @response.body)
   end
 end

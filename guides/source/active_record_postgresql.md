@@ -9,7 +9,10 @@ After reading this guide, you will know:
 
 * How to use PostgreSQL's datatypes.
 * How to use UUID primary keys.
+* How to include non-key columns in indexes.
 * How to use deferrable foreign keys.
+* How to use unique constraints.
+* How to implement exclusion constraints.
 * How to implement full text search with PostgreSQL.
 * How to back your Active Record models with database views.
 
@@ -311,25 +314,39 @@ irb> article.status = "deleted"
 ArgumentError: 'deleted' is not a valid status
 ```
 
-To add a new value (before or after an existing one) or to rename a value you should use [ALTER TYPE](https://www.postgresql.org/docs/current/static/sql-altertype.html):
+To rename the enum you can use `rename_enum` along with updating any model
+usage:
 
 ```ruby
-# db/migrate/20150720144913_add_new_state_to_articles.rb
-disable_ddl_transaction!
-
-def up
-  execute <<-SQL
-    ALTER TYPE article_status ADD VALUE IF NOT EXISTS 'deleted' AFTER 'archived';
-    ALTER TYPE article_status RENAME VALUE 'archived' TO 'hidden';
-  SQL
+# db/migrate/20150718144917_rename_article_status.rb
+def change
+  rename_enum :article_status, to: :article_state
 end
 ```
 
-NOTE: `ALTER TYPE ... ADD VALUE` cannot be executed inside of a transaction block so here we are using `disable_ddl_transaction!`
+To add a new value you can use `add_enum_value`:
 
-WARNING. Enum values [can't be dropped or reordered](https://www.postgresql.org/docs/current/datatype-enum.html). Adding a value is not easily reversed.
+```ruby
+# db/migrate/20150720144913_add_new_state_to_articles.rb
+def up
+  add_enum_value :article_state, "archived" # will be at the end after published
+  add_enum_value :article_state, "in review", before: "published"
+  add_enum_value :article_state, "approved", after: "in review"
+end
+```
 
-Hint: to show all the values of the all enums you have, you should call this query in `bin/rails db` or `psql` console:
+NOTE: Enum values can't be dropped, which also means add_enum_value is irreversible. You can read why [here](https://www.postgresql.org/message-id/29F36C7C98AB09499B1A209D48EAA615B7653DBC8A@mail2a.alliedtesting.com).
+
+To rename a value you can use `rename_enum_value`:
+
+```ruby
+# db/migrate/20150722144915_rename_article_state.rb
+def change
+  rename_enum_value :article_state, from: "archived", to: "deleted"
+end
+```
+
+Hint: to show all the values of the all enums you have, you can call this query in `bin/rails db` or `psql` console:
 
 ```sql
 SELECT n.nspname AS enum_schema,
@@ -468,7 +485,7 @@ irb> macbook.address
 * [type definition](https://www.postgresql.org/docs/current/static/datatype-geometric.html)
 
 All geometric types, with the exception of `points` are mapped to normal text.
-A point is casted to an array containing `x` and `y` coordinates.
+A point is cast to an array containing `x` and `y` coordinates.
 
 ### Interval
 
@@ -543,6 +560,34 @@ When building a model with a foreign key that will reference this UUID, treat
 $ rails generate model Case device_id:uuid
 ```
 
+Indexing
+--------
+
+* [index creation](https://www.postgresql.org/docs/current/sql-createindex.html)
+
+PostgreSQL includes a variety of index options. The following options are
+supported by the PostgreSQL adapter in addition to the
+[common index options](https://api.rubyonrails.org/classes/ActiveRecord/ConnectionAdapters/SchemaStatements.html#method-i-add_index)
+
+### Include
+
+When creating a new index, non-key columns can be included with the `:include` option.
+These keys are not used in index scans for searching, but can be read during an index
+only scan without having to visit the associated table.
+
+```ruby
+# db/migrate/20131220144913_add_index_users_on_email_include_id.rb
+
+add_index :users, :email, include: :id
+```
+
+Multiple columns are supported:
+
+```ruby
+# db/migrate/20131220144913_add_index_users_on_email_include_id_and_created_at.rb
+
+add_index :users, :email, include: [:id, :created_at]
+```
 
 Generated Columns
 -----------------
@@ -588,7 +633,7 @@ ActiveRecord::Base.connection.transaction do
 end
 ```
 
-The `:deferrable` option can also be set to `true` or `:immediate`, which has the same effect. Both options let the foreign keys keep the default behavior of checking the constraint immediately, but allow manually deferring the checks using `SET CONSTRAINTS ALL DEFERRED` within a transaction. This will cause the foreign keys to be checked when the transaction is committed:
+When the `:deferrable` option is set to `:immediate`, let the foreign keys keep the default behavior of checking the constraint immediately, but allow manually deferring the checks using `SET CONSTRAINTS ALL DEFERRED` within a transaction. This will cause the foreign keys to be checked when the transaction is committed:
 
 ```ruby
 ActiveRecord::Base.transaction do
@@ -599,6 +644,44 @@ end
 ```
 
 By default `:deferrable` is `false` and the constraint is always checked immediately.
+
+Unique Constraint
+-----------------
+
+* [unique constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-UNIQUE-CONSTRAINTS)
+
+```ruby
+# db/migrate/20230422225213_create_items.rb
+create_table :items do |t|
+  t.integer :position, null: false
+  t.unique_constraint [:position], deferrable: :immediate
+end
+```
+
+If you want to change an existing unique index to deferrable, you can use `:using_index` to create deferrable unique constraints.
+
+```ruby
+add_unique_constraint :items, deferrable: :deferred, using_index: "index_items_on_position"
+```
+
+Like foreign keys, unique constraints can be deferred by setting `:deferrable` to either `:immediate` or `:deferred`. By default, `:deferrable` is `false` and the constraint is always checked immediately.
+
+Exclusion Constraints
+---------------------
+
+* [exclusion constraints](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-EXCLUSION)
+
+```ruby
+# db/migrate/20131220144913_create_products.rb
+create_table :products do |t|
+  t.integer :price, null: false
+  t.daterange :availability_range, null: false
+
+  t.exclusion_constraint "price WITH =, availability_range WITH &&", using: :gist, name: "price_check"
+end
+```
+
+Like foreign keys, exclusion constraints can be deferred by setting `:deferrable` to either `:immediate` or `:deferred`. By default, `:deferrable` is `false` and the constraint is always checked immediately.
 
 Full Text Search
 ----------------

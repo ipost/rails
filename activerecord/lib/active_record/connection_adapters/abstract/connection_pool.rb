@@ -10,22 +10,6 @@ require "active_record/connection_adapters/abstract/connection_pool/reaper"
 module ActiveRecord
   module ConnectionAdapters
     module AbstractPool # :nodoc:
-      def get_schema_cache(connection)
-        self.schema_cache ||= SchemaCache.new(connection)
-        schema_cache.connection = connection
-        schema_cache
-      end
-
-      def set_schema_cache(cache)
-        self.schema_cache = cache
-      end
-
-      def lazily_set_schema_cache
-        return unless ActiveRecord.lazily_load_schema_cache
-
-        cache = SchemaCache.load_from(db_config.lazy_schema_cache_path)
-        set_schema_cache(cache)
-      end
     end
 
     class NullPool # :nodoc:
@@ -38,7 +22,19 @@ module ActiveRecord
       end
       NULL_CONFIG = NullConfig.new # :nodoc:
 
-      attr_accessor :schema_cache
+      def initialize
+        super()
+        @mutex = Mutex.new
+        @server_version = nil
+      end
+
+      def server_version(connection) # :nodoc:
+        @server_version || @mutex.synchronize { @server_version ||= connection.get_database_version }
+      end
+
+      def schema_reflection
+        SchemaReflection.new(nil)
+      end
 
       def connection_class; end
       def checkin(_); end
@@ -49,6 +45,8 @@ module ActiveRecord
       end
     end
 
+    # = Active Record Connection Pool
+    #
     # Connection pool base class for managing Active Record database
     # connections.
     #
@@ -91,7 +89,7 @@ module ActiveRecord
     # While a thread has a connection checked out from the pool using one of the
     # above three methods, that connection will automatically be the one used
     # by ActiveRecord queries executing on that thread. It is not required to
-    # explicitly pass the checked out connection to Rails models or queries, for
+    # explicitly pass the checked out connection to \Rails models or queries, for
     # example.
     #
     # == Options
@@ -123,7 +121,7 @@ module ActiveRecord
       attr_accessor :automatic_reconnect, :checkout_timeout
       attr_reader :db_config, :size, :reaper, :pool_config, :async_executor, :role, :shard
 
-      delegate :schema_cache, :schema_cache=, to: :pool_config
+      delegate :schema_reflection, :schema_reflection=, :server_version, to: :pool_config
 
       # Creates a new ConnectionPool object. +pool_config+ is a PoolConfig
       # object which describes database connection information (e.g. adapter,
@@ -170,8 +168,6 @@ module ActiveRecord
         @lock_thread = false
 
         @async_executor = build_async_executor
-
-        lazily_set_schema_cache
 
         @reaper = Reaper.new(self, db_config.reaping_frequency)
         @reaper.run
@@ -247,7 +243,7 @@ module ActiveRecord
 
       # Returns true if a connection has already been opened.
       def connected?
-        synchronize { @connections.any? }
+        synchronize { @connections.any?(&:connected?) }
       end
 
       # Returns an array containing the connections currently in the pool.
@@ -684,9 +680,11 @@ module ActiveRecord
         alias_method :release, :remove_connection_from_thread_cache
 
         def new_connection
-          Base.public_send(db_config.adapter_method, db_config.configuration_hash).tap do |conn|
-            conn.check_version
-          end
+          connection = Base.public_send(db_config.adapter_method, db_config.configuration_hash)
+          connection.pool = self
+          connection
+        rescue ConnectionNotEstablished => ex
+          raise ex.set_pool(self)
         end
 
         # If the pool is not at a <tt>@size</tt> limit, establish new connection. Connecting
@@ -736,7 +734,7 @@ module ActiveRecord
             c.clean!
           end
           c
-        rescue
+        rescue Exception
           remove c
           c.disconnect!
           raise

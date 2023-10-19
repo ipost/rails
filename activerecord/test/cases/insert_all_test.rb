@@ -64,6 +64,8 @@ class InsertAllTest < ActiveRecord::TestCase
   end
 
   def test_insert_all_should_handle_empty_arrays
+    skip unless supports_insert_on_duplicate_update?
+
     assert_empty Book.insert_all([])
     assert_empty Book.insert_all!([])
     assert_empty Book.upsert_all([])
@@ -219,6 +221,18 @@ class InsertAllTest < ActiveRecord::TestCase
     end
   end
 
+  def test_insert_all_and_upsert_all_finds_index_with_inverted_unique_by_columns
+    skip unless supports_insert_conflict_target?
+
+    columns = [:author_id, :name]
+    assert ActiveRecord::Base.connection.index_exists?(:books, columns)
+
+    assert_difference "Book.count", +2 do
+      Book.insert_all [{ name: "Remote", author_id: 1 }], unique_by: columns.reverse
+      Book.upsert_all [{ name: "Rework", author_id: 1 }], unique_by: columns.reverse
+    end
+  end
+
   def test_insert_all_and_upsert_all_works_with_composite_primary_keys_when_unique_by_is_provided
     skip unless supports_insert_conflict_target?
 
@@ -265,6 +279,8 @@ class InsertAllTest < ActiveRecord::TestCase
   end
 
   def test_insert_all_and_upsert_all_with_aliased_attributes
+    skip unless supports_insert_on_duplicate_update?
+
     if supports_insert_returning?
       assert_difference "Book.count" do
         result = Book.insert_all [{ title: "Remote", author_id: 1 }], returning: :title
@@ -272,18 +288,18 @@ class InsertAllTest < ActiveRecord::TestCase
       end
     end
 
-    if supports_insert_on_duplicate_update?
-      Book.upsert_all [{ id: 101, title: "Perelandra", author_id: 7, isbn: "1974522598" }]
-      Book.upsert_all [{ id: 101, title: "Perelandra 2", author_id: 6, isbn: "111111" }], update_only: %i[ title isbn ]
+    Book.upsert_all [{ id: 101, title: "Perelandra", author_id: 7, isbn: "1974522598" }]
+    Book.upsert_all [{ id: 101, title: "Perelandra 2", author_id: 6, isbn: "111111" }], update_only: %i[ title isbn ]
 
-      book = Book.find(101)
-      assert_equal "Perelandra 2", book.title, "Should have updated the title"
-      assert_equal "111111", book.isbn, "Should have updated the isbn"
-      assert_equal 7, book.author_id, "Should not have updated the author_id"
-    end
+    book = Book.find(101)
+    assert_equal "Perelandra 2", book.title, "Should have updated the title"
+    assert_equal "111111", book.isbn, "Should have updated the isbn"
+    assert_equal 7, book.author_id, "Should not have updated the author_id"
   end
 
   def test_insert_all_and_upsert_all_with_sti
+    skip unless supports_insert_on_duplicate_update?
+
     assert_difference -> { Category.count }, 2 do
       SpecialCategory.insert_all [{ name: "First" }, { name: "Second", type: nil }]
     end
@@ -292,15 +308,13 @@ class InsertAllTest < ActiveRecord::TestCase
     assert_equal "SpecialCategory", first.type
     assert_nil second.type
 
-    if supports_insert_on_duplicate_update?
-      SpecialCategory.upsert_all [{ id: 103, name: "First" }, { id: 104, name: "Second", type: nil }]
+    SpecialCategory.upsert_all [{ id: 103, name: "First" }, { id: 104, name: "Second", type: nil }]
 
-      category3 = Category.find(103)
-      assert_equal "SpecialCategory", category3.type
+    category3 = Category.find(103)
+    assert_equal "SpecialCategory", category3.type
 
-      category4 = Category.find(104)
-      assert_nil category4.type
-    end
+    category4 = Category.find(104)
+    assert_nil category4.type
   end
 
   def test_upsert_logs_message_including_model_name

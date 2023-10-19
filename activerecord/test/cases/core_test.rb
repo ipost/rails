@@ -7,28 +7,9 @@ require "pp"
 require "models/cpk"
 
 class NonExistentTable < ActiveRecord::Base; end
-class PkWithDefault < ActiveRecord::Base; end
 
 class CoreTest < ActiveRecord::TestCase
-  fixtures :topics, :cpk_books
-
-  def test_eql_on_default_pk
-    saved_record = PkWithDefault.new
-    saved_record.save!
-    assert_equal 123, saved_record.id
-
-    record = PkWithDefault.new
-    assert_equal 123, record.id
-
-    record2 = PkWithDefault.new
-    assert_equal 123, record2.id
-
-    assert     record.eql?(record),       "record should eql? itself"
-    assert_not record.eql?(saved_record), "new record should not eql? saved"
-    assert_not saved_record.eql?(record), "saved record should not eql? new"
-    assert_not record.eql?(record2),      "new record should not eql? new record"
-    assert_not record2.eql?(record),      "new record should not eql? new record"
-  end
+  fixtures :topics
 
   def test_inspect_class
     assert_equal "ActiveRecord::Base", ActiveRecord::Base.inspect
@@ -38,7 +19,7 @@ class CoreTest < ActiveRecord::TestCase
 
   def test_inspect_instance
     topic = topics(:first)
-    assert_equal %(#<Topic id: 1, title: "The First Topic", author_name: "David", author_email_address: "david@loudthinking.com", written_on: "#{topic.written_on.to_fs(:inspect)}", bonus_time: "#{topic.bonus_time.to_fs(:inspect)}", last_read: "#{topic.last_read.to_fs(:inspect)}", content: "Have a nice day", important: nil, approved: false, replies_count: 1, unique_replies_count: 0, parent_id: nil, parent_title: nil, type: nil, group: nil, created_at: "#{topic.created_at.to_fs(:inspect)}", updated_at: "#{topic.updated_at.to_fs(:inspect)}">), topic.inspect
+    assert_equal %(#<Topic id: 1, title: "The First Topic", author_name: "David", author_email_address: "david@loudthinking.com", written_on: "#{topic.written_on.to_fs(:inspect)}", bonus_time: "#{topic.bonus_time.to_fs(:inspect)}", last_read: "#{topic.last_read.to_fs(:inspect)}", content: "Have a nice day", important: nil, binary_content: nil, approved: false, replies_count: 1, unique_replies_count: 0, parent_id: nil, parent_title: nil, type: nil, group: nil, created_at: "#{topic.created_at.to_fs(:inspect)}", updated_at: "#{topic.updated_at.to_fs(:inspect)}">), topic.inspect
   end
 
   def test_inspect_instance_with_lambda_date_formatter
@@ -46,7 +27,7 @@ class CoreTest < ActiveRecord::TestCase
     Time::DATE_FORMATS[:inspect] = ->(date) { "my_format" }
     topic = topics(:first)
 
-    assert_equal %(#<Topic id: 1, title: "The First Topic", author_name: "David", author_email_address: "david@loudthinking.com", written_on: "my_format", bonus_time: "my_format", last_read: "2004-04-15", content: "Have a nice day", important: nil, approved: false, replies_count: 1, unique_replies_count: 0, parent_id: nil, parent_title: nil, type: nil, group: nil, created_at: "my_format", updated_at: "my_format">), topic.inspect
+    assert_equal %(#<Topic id: 1, title: "The First Topic", author_name: "David", author_email_address: "david@loudthinking.com", written_on: "my_format", bonus_time: "my_format", last_read: "2004-04-15", content: "Have a nice day", important: nil, binary_content: nil, approved: false, replies_count: 1, unique_replies_count: 0, parent_id: nil, parent_title: nil, type: nil, group: nil, created_at: "my_format", updated_at: "my_format">), topic.inspect
 
   ensure
     Time::DATE_FORMATS[:inspect] = before
@@ -90,6 +71,7 @@ class CoreTest < ActiveRecord::TestCase
        last_read: nil,
        content: nil,
        important: nil,
+       binary_content: nil,
        approved: true,
        replies_count: 0,
        unique_replies_count: 0,
@@ -119,6 +101,7 @@ class CoreTest < ActiveRecord::TestCase
        last_read: Thu, 15 Apr 2004,
        content: "Have a nice day",
        important: nil,
+       binary_content: nil,
        approved: false,
        replies_count: 1,
        unique_replies_count: 0,
@@ -174,12 +157,12 @@ class CoreTest < ActiveRecord::TestCase
 
   def test_composite_pk_models_added_to_a_set
     library = Set.new
-    # new record with primary key present
-    library << Cpk::Book.new(author_id: 1, number: 2)
+    # with primary key present
+    library << Cpk::Book.new(id: [1, 2])
 
     # duplicate
-    library << cpk_books(:cpk_great_author_first_book)
-    library << cpk_books(:cpk_great_author_first_book)
+    library << Cpk::Book.new(id: [1, 3])
+    library << Cpk::Book.new(id: [1, 3])
 
     # without primary key being set
     library << Cpk::Book.new(title: "Book A")
@@ -189,34 +172,22 @@ class CoreTest < ActiveRecord::TestCase
   end
 
   def test_composite_pk_models_equality
-    book = cpk_books(:cpk_great_author_first_book)
-    book_instance_1 = Cpk::Book.find_by(author_id: book.author_id, number: book.number)
-    book_instance_2 = Cpk::Book.find_by(author_id: book.author_id, number: book.number)
+    assert Cpk::Book.new(id: [1, 2]) == Cpk::Book.new(id: [1, 2])
 
-    assert book_instance_1 == book_instance_1
-    assert book_instance_1 == book_instance_2
-
-    # two new records with the same primary key
-    assert_not Cpk::Book.new(author_id: 1, number: 2) == Cpk::Book.new(author_id: 1, number: 2)
-    # two new records with an empty primary key values
+    assert_not Cpk::Book.new(id: [1, 2]) == Cpk::Book.new(id: [1, 3])
     assert_not Cpk::Book.new == Cpk::Book.new
-    # two persisted records with a different primary key
-    assert_not cpk_books(:cpk_great_author_first_book) == cpk_books(:cpk_great_author_second_book)
+    assert_not Cpk::Book.new(title: "Book A") == Cpk::Book.new(title: "Book B")
+    assert_not Cpk::Book.new(author_id: 1) == Cpk::Book.new(author_id: 1)
+    assert_not Cpk::Book.new(author_id: 1, title: "Same title") == Cpk::Book.new(author_id: 1, title: "Same title")
   end
 
   def test_composite_pk_models_hash
-    book = cpk_books(:cpk_great_author_first_book)
-    book_instance_1 = Cpk::Book.find_by(author_id: book.author_id, number: book.number)
-    book_instance_2 = Cpk::Book.find_by(author_id: book.author_id, number: book.number)
+    assert_equal Cpk::Book.new(id: [1, 2]).hash, Cpk::Book.new(id: [1, 2]).hash
 
-    assert_equal book_instance_1.hash, book_instance_1.hash
-    assert_equal book_instance_1.hash, book_instance_2.hash
-
-    # two new records with the same primary key
-    assert_not_equal Cpk::Book.new(author_id: 1, number: 2).hash, Cpk::Book.new(author_id: 1, number: 2).hash
-    # two new records with an empty primary key values
+    assert_not_equal Cpk::Book.new(id: [1, 2]).hash, Cpk::Book.new(id: [1, 3]).hash
     assert_not_equal Cpk::Book.new.hash, Cpk::Book.new.hash
-    # two persisted records with a different primary key
-    assert_not_equal cpk_books(:cpk_great_author_first_book).hash, cpk_books(:cpk_great_author_second_book).hash
+    assert_not_equal Cpk::Book.new(title: "Book A").hash, Cpk::Book.new(title: "Book B").hash
+    assert_not_equal Cpk::Book.new(author_id: 1).hash, Cpk::Book.new(author_id: 1).hash
+    assert_not_equal Cpk::Book.new(author_id: 1, title: "Same title").hash, Cpk::Book.new(author_id: 1, title: "Same title").hash
   end
 end

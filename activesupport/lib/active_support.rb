@@ -28,6 +28,7 @@ require "active_support/dependencies/autoload"
 require "active_support/version"
 require "active_support/deprecator"
 require "active_support/logger"
+require "active_support/broadcast_logger"
 require "active_support/lazy_load_hooks"
 require "active_support/core_ext/date_and_time/compatibility"
 
@@ -67,7 +68,6 @@ module ActiveSupport
     autoload :Gzip
     autoload :Inflector
     autoload :JSON
-    autoload :JsonWithMarshalFallback
     autoload :KeyGenerator
     autoload :MessageEncryptor
     autoload :MessageEncryptors

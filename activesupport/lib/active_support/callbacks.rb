@@ -9,6 +9,8 @@ require "active_support/core_ext/object/blank"
 require "thread"
 
 module ActiveSupport
+  # = Active Support \Callbacks
+  #
   # \Callbacks are code hooks that are run at key points in an object's life cycle.
   # The typical use case is to have a base class define a set of callbacks
   # relevant to the other functionality it supplies, so that subclasses can
@@ -741,7 +743,7 @@ module ActiveSupport
         #
         # The callback can be specified as a symbol naming an instance method; as a
         # proc, lambda, or block; or as an object that responds to a certain method
-        # determined by the <tt>:scope</tt> argument to +define_callbacks+.
+        # determined by the <tt>:scope</tt> argument to #define_callbacks.
         #
         # If a proc, lambda, or block is given, its body is evaluated in the context
         # of the current object. It can also optionally accept the current object as
@@ -785,9 +787,12 @@ module ActiveSupport
           end
         end
 
-        # Skip a previously set callback. Like +set_callback+, <tt>:if</tt> or
+        # Skip a previously set callback. Like #set_callback, <tt>:if</tt> or
         # <tt>:unless</tt> options may be passed in order to control when the
         # callback is skipped.
+        #
+        # Note: this example uses +PersonRecord+ and +#saving_message+, which you
+        # can see defined here[rdoc-ref:ActiveSupport::Callbacks]
         #
         #   class Writer < PersonRecord
         #     attr_accessor :age
@@ -931,7 +936,7 @@ module ActiveSupport
         # <tt>!</tt>, <tt>?</tt> or <tt>=</tt>.
         #
         # Calling +define_callbacks+ multiple times with the same +names+ will
-        # overwrite previous callbacks registered with +set_callback+.
+        # overwrite previous callbacks registered with #set_callback.
         def define_callbacks(*names)
           options = names.extract_options!
 

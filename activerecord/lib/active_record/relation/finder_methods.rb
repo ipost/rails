@@ -6,7 +6,9 @@ module ActiveRecord
   module FinderMethods
     ONE_AS_ONE = "1 AS one"
 
-    # Find by id - This can either be a specific id (1), a list of ids (1, 5, 6), or an array of ids ([5, 6, 10]).
+    # Find by id - This can either be a specific id (ID), a list of ids (ID, ID, ID), or an array of ids ([ID, ID, ID]).
+    # `ID` refers to an "identifier". For models with a single-column primary key, `ID` will be a single value,
+    # and for models with a composite primary key, it will be an array of values.
     # If one or more records cannot be found for the requested ids, then ActiveRecord::RecordNotFound will be raised.
     # If the primary key is an integer, find by id coerces its arguments by using +to_i+.
     #
@@ -14,9 +16,30 @@ module ActiveRecord
     #   Person.find("1")        # returns the object for ID = 1
     #   Person.find("31-sarah") # returns the object for ID = 31
     #   Person.find(1, 2, 6)    # returns an array for objects with IDs in (1, 2, 6)
-    #   Person.find([7, 17])    # returns an array for objects with IDs in (7, 17)
+    #   Person.find([7, 17])    # returns an array for objects with IDs in (7, 17), or with composite primary key [7, 17]
     #   Person.find([1])        # returns an array for the object with ID = 1
     #   Person.where("administrator = 1").order("created_on DESC").find(1)
+    #
+    # ==== Find a record for a composite primary key model
+    #   TravelRoute.primary_key = [:origin, :destination]
+    #
+    #   TravelRoute.find(["Ottawa", "London"])
+    #   => #<TravelRoute origin: "Ottawa", destination: "London">
+    #
+    #   TravelRoute.find([["Paris", "Montreal"]])
+    #   => [#<TravelRoute origin: "Paris", destination: "Montreal">]
+    #
+    #   TravelRoute.find(["New York", "Las Vegas"], ["New York", "Portland"])
+    #   => [
+    #        #<TravelRoute origin: "New York", destination: "Las Vegas">,
+    #        #<TravelRoute origin: "New York", destination: "Portland">
+    #      ]
+    #
+    #   TravelRoute.find([["Berlin", "London"], ["Barcelona", "Lisbon"]])
+    #   => [
+    #        #<TravelRoute origin: "Berlin", destination: "London">,
+    #        #<TravelRoute origin: "Barcelona", destination: "Lisbon">
+    #      ]
     #
     # NOTE: The returned records are in the same order as the ids you provide.
     # If you want the results to be sorted by database, you can use ActiveRecord::QueryMethods#where
@@ -352,10 +375,20 @@ module ActiveRecord
     # compared to the records in memory. If the relation is unloaded, an
     # efficient existence query is performed, as in #exists?.
     def include?(record)
+      # The existing implementation relies on receiving an Active Record instance as the input parameter named record.
+      # Any non-Active Record object passed to this implementation is guaranteed to return `false`.
+      return false unless record.is_a?(klass)
+
       if loaded? || offset_value || limit_value || having_clause.any?
         records.include?(record)
       else
-        record.is_a?(klass) && exists?(record.id)
+        id = if record.class.composite_primary_key?
+          record.class.primary_key.zip(record.id).to_h
+        else
+          record.id
+        end
+
+        exists?(id)
       end
     end
 
@@ -494,12 +527,7 @@ module ActiveRecord
       def find_some(ids)
         return find_some_ordered(ids) unless order_values.present?
 
-        relation = if klass.composite_primary_key?
-          ids.map { |values_set| where(primary_key.zip(values_set).to_h) }.inject(&:or)
-        else
-          where(primary_key => ids)
-        end
-
+        relation = where(primary_key => ids)
         relation = relation.select(table[primary_key]) unless select_values.empty?
         result = relation.to_a
 
@@ -526,11 +554,7 @@ module ActiveRecord
         ids = ids.slice(offset_value || 0, limit_value || ids.size) || []
 
         relation = except(:limit, :offset)
-        relation = if klass.composite_primary_key?
-          ids.map { |values_set| relation.where(primary_key.zip(values_set).to_h) }.inject(&:or)
-        else
-          relation.where(primary_key => ids)
-        end
+        relation = relation.where(primary_key => ids)
         relation = relation.select(table[primary_key]) unless select_values.empty?
         result = relation.records
 

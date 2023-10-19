@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "pp"
 require "cases/helper"
 require "models/computer"
 require "models/developer"
@@ -35,6 +36,7 @@ require "models/essay"
 require "models/member"
 require "models/membership"
 require "models/sharded"
+require "models/cpk"
 require "models/member_detail"
 require "models/organization"
 
@@ -42,7 +44,8 @@ require "models/organization"
 class AssociationsTest < ActiveRecord::TestCase
   fixtures :accounts, :companies, :developers, :projects, :developers_projects,
            :computers, :people, :readers, :authors, :author_addresses, :author_favorites,
-           :comments, :posts, :sharded_blogs, :sharded_blog_posts, :sharded_comments, :sharded_tags, :sharded_blog_posts_tags
+           :comments, :posts, :sharded_blogs, :sharded_blog_posts, :sharded_comments, :sharded_tags, :sharded_blog_posts_tags,
+           :cpk_orders, :cpk_books, :cpk_reviews
 
   def test_eager_loading_should_not_change_count_of_children
     liquid = Liquid.create(name: "salty")
@@ -76,6 +79,16 @@ class AssociationsTest < ActiveRecord::TestCase
     assert_equal "Deck", ship.parts[0].name
   end
 
+  def test_loading_cpk_association_when_persisted_and_in_memory_differ
+    order = Cpk::Order.create!(id: [1, 2], status: "paid")
+    book = order.books.create!(id: [3, 4], title: "Book")
+
+    Cpk::Book.find(book.id).update_columns(title: "A different title")
+    order.books.load
+
+    assert_equal [3, 4], book.id
+  end
+
   def test_include_with_order_works
     assert_nothing_raised { Account.all.merge!(order: "id", includes: :firm).first }
     assert_nothing_raised { Account.all.merge!(order: :id, includes: :firm).first }
@@ -99,13 +112,13 @@ class AssociationsTest < ActiveRecord::TestCase
     firm = Firm.new("name" => "A New Firm, Inc")
     firm.save
     firm.clients.each { } # forcing to load all clients
-    assert firm.clients.empty?, "New firm shouldn't have client objects"
+    assert_predicate firm.clients, :empty?, "New firm shouldn't have client objects"
     assert_equal 0, firm.clients.size, "New firm should have 0 clients"
 
     client = Client.new("name" => "TheClient.com", "firm_id" => firm.id)
     client.save
 
-    assert firm.clients.empty?, "New firm should have cached no client objects"
+    assert_predicate firm.clients, :empty?, "New firm should have cached no client objects"
     assert_equal 0, firm.clients.size, "New firm should have cached 0 clients count"
 
     firm.clients.reload
@@ -136,6 +149,14 @@ class AssociationsTest < ActiveRecord::TestCase
     assert_equal(blog_post, comment.blog_post)
   end
 
+  def test_belongs_to_a_cpk_model_by_id_attribute
+    order = cpk_orders(:cpk_groceries_order_1)
+    _order_shop_id, order_id = order.id
+    agreement = Cpk::OrderAgreement.create(order_id: order_id, signature: "signed")
+
+    assert_equal(order, agreement.order)
+  end
+
   def test_belongs_to_a_model_with_composite_primary_key_uses_composite_pk_in_sql
     comment = sharded_comments(:great_comment_blog_post_one)
 
@@ -156,12 +177,61 @@ class AssociationsTest < ActiveRecord::TestCase
     assert_equal(expected_posts.map(&:id).sort, blog_posts.map(&:id).sort)
   end
 
+  def test_querying_by_single_associated_record_works_using_query_constraints
+    comments = [sharded_comments(:great_comment_blog_post_one), sharded_comments(:great_comment_blog_post_two)]
+
+    blog_posts = Sharded::BlogPost.where(comments: comments.last).to_a
+
+    expected_posts = [sharded_blog_posts(:great_post_blog_two)]
+    assert_equal(expected_posts.map(&:id).sort, blog_posts.map(&:id).sort)
+  end
+
+  def test_querying_by_relation_with_composite_key
+    expected_posts = [sharded_blog_posts(:great_post_blog_one), sharded_blog_posts(:great_post_blog_two)]
+
+    blog_posts = Sharded::BlogPost.where(comments: Sharded::Comment.where(body: "I really enjoyed the post!")).to_a
+
+    assert_equal(expected_posts.map(&:id).sort, blog_posts.map(&:id).sort)
+  end
+
+  def test_has_many_with_foreign_key_as_an_array_raises
+    expected_message = <<~MSG.squish
+      Passing [:blog_id, :blog_post_id] array to :foreign_key option
+      on the Sharded::BlogPost#broken_array_fk_comments association is not supported.
+      Use the query_constraints: [:blog_id, :blog_post_id] option instead to represent a composite foreign key.
+    MSG
+    assert_raises ArgumentError, match: expected_message do
+      Sharded::BlogPost.has_many :broken_array_fk_comments,
+        class_name: "Sharded::Comment", foreign_key: [:blog_id, :blog_post_id]
+    end
+  end
+
+  def test_belongs_to_with_foreign_key_as_an_array_raises
+    expected_message = <<~MSG.squish
+      Passing [:blog_id, :blog_post_id] array to :foreign_key option
+      on the Sharded::Comment#broken_array_fk_blog_post association is not supported.
+      Use the query_constraints: [:blog_id, :blog_post_id] option instead to represent a composite foreign key.
+    MSG
+    assert_raises ArgumentError, match: expected_message do
+      Sharded::Comment.belongs_to :broken_array_fk_blog_post,
+        class_name: "Sharded::Blog", foreign_key: [:blog_id, :blog_post_id]
+    end
+  end
+
   def test_has_many_association_with_composite_foreign_key_loads_records
     blog_post = sharded_blog_posts(:great_post_blog_one)
 
     comments = blog_post.comments.to_a
     assert_includes(comments, sharded_comments(:wow_comment_blog_post_one))
     assert_includes(comments, sharded_comments(:great_comment_blog_post_one))
+  end
+
+  def test_cpk_model_has_many_records_by_id_attribute
+    order = cpk_orders(:cpk_groceries_order_1)
+    _order_shop_id, order_id = order.id
+    agreements = 2.times.map { Cpk::OrderAgreement.create(order_id: order_id, signature: "signed") }
+
+    assert_equal(agreements.sort, order.order_agreements.to_a.sort)
   end
 
   def test_has_many_association_from_a_model_with_query_constraints_different_from_the_association
@@ -177,6 +247,18 @@ class AssociationsTest < ActiveRecord::TestCase
     assert_match(/WHERE .*#{Regexp.escape(Sharded::Comment.connection.quote_table_name("sharded_comments.blog_id"))} =/, sql)
     assert_not_empty(comments)
     assert_equal(expected_comments.sort, comments.sort)
+  end
+
+  def test_query_constraints_over_three_without_defining_explicit_foreign_key_query_constraints_raises
+    Sharded::BlogPostWithRevision.has_many :comments_without_query_constraints, primary_key: [:blog_id, :id], class_name: "Comment"
+    blog_post = sharded_blog_posts(:great_post_blog_one)
+    blog_post = Sharded::BlogPostWithRevision.find(blog_post.id)
+
+    error = assert_raises ArgumentError do
+      blog_post.comments_without_query_constraints.to_a
+    end
+
+    assert_equal "The query constraints list on the `Sharded::BlogPostWithRevision` model has more than 2 attributes. Active Record is unable to derive the query constraints for the association. You need to explicitly define the query constraints for this association.", error.message
   end
 
   def test_model_with_composite_query_constraints_has_many_association_sql
@@ -200,6 +282,13 @@ class AssociationsTest < ActiveRecord::TestCase
 
     assert_predicate blog_post, :persisted?
     assert_equal(blog_post, comment.blog_post_by_id)
+  end
+
+  def test_preloads_model_with_query_constraints_by_explicitly_configured_fk_and_pk
+    comment = sharded_comments(:great_comment_blog_post_one)
+    comments = Sharded::Comment.where(id: comment.id).preload(:blog_post_by_id).to_a
+    comment = comments.first
+    assert_equal(comment.blog_post_by_id, comment.blog_post)
   end
 
   def test_append_composite_foreign_key_has_many_association
@@ -267,6 +356,36 @@ class AssociationsTest < ActiveRecord::TestCase
     assert_equal(blog_post, comment.blog_post)
     assert_equal(comment.blog_id, blog_post.blog_id)
     assert_equal(another_blog.id, comment.blog_id)
+  end
+
+  def test_query_constraints_that_dont_include_the_primary_key_raise
+    original = Sharded::BlogPost.instance_variable_get(:@query_constraints_list)
+    Sharded::BlogPost.query_constraints :title, :revision
+    Sharded::BlogPost.has_many :comments_without_query_constraints, primary_key: [:blog_id, :id], class_name: "Comment"
+    blog_post = sharded_blog_posts(:great_post_blog_one)
+
+    error = assert_raises ArgumentError do
+      blog_post.comments_without_query_constraints.to_a
+    end
+
+    assert_equal "The query constraints on the `Sharded::BlogPost` model does not include the primary key so Active Record is unable to derive the foreign key constraints for the association. You need to explicitly define the query constraints for this association.", error.message
+  ensure
+    Sharded::BlogPost.instance_variable_set(:@query_constraints_list, original)
+  end
+
+  def test_assign_belongs_to_cpk_model_by_id_attribute
+    order = cpk_orders(:cpk_groceries_order_1)
+    agreement = Cpk::OrderAgreement.new(signature: "signed")
+
+    agreement.order = order
+    agreement.save
+
+    assert_not_nil(agreement.reload.order)
+    assert_not_nil(agreement.order_id)
+
+    assert_equal(order, agreement.order)
+    _shop_id, order_id = order.id
+    assert_equal(order_id, agreement.order_id)
   end
 
   def test_append_composite_foreign_key_has_many_association_with_autosave
@@ -400,6 +519,15 @@ class AssociationProxyTest < ActiveRecord::TestCase
     assert_predicate andreas.audit_logs, :loaded?
   end
 
+  def test_pretty_print_does_not_reload_a_not_yet_loaded_target
+    andreas = Developer.new(log: "new developer added")
+    assert_not_predicate andreas.audit_logs, :loaded?
+    out = StringIO.new
+    PP.pp(andreas.audit_logs, out)
+    assert_match(/message: "new developer added"/, out.string)
+    assert_predicate andreas.audit_logs, :loaded?
+  end
+
   def test_save_on_parent_saves_children
     developer = Developer.create name: "Bryan", salary: 50_000
     assert_equal 1, developer.reload.audit_logs.size
@@ -407,14 +535,14 @@ class AssociationProxyTest < ActiveRecord::TestCase
 
   def test_create_via_association_with_block
     post = authors(:david).posts.create(title: "New on Edge") { |p| p.body = "More cool stuff!" }
-    assert_equal post.title, "New on Edge"
-    assert_equal post.body, "More cool stuff!"
+    assert_equal "New on Edge", post.title
+    assert_equal "More cool stuff!", post.body
   end
 
   def test_create_with_bang_via_association_with_block
     post = authors(:david).posts.create!(title: "New on Edge") { |p| p.body = "More cool stuff!" }
-    assert_equal post.title, "New on Edge"
-    assert_equal post.body, "More cool stuff!"
+    assert_equal "New on Edge", post.title
+    assert_equal "More cool stuff!", post.body
   end
 
   def test_reload_returns_association
@@ -637,7 +765,7 @@ end
 class PreloaderTest < ActiveRecord::TestCase
   fixtures :posts, :comments, :books, :authors, :tags, :taggings, :essays, :categories, :author_addresses,
            :sharded_blog_posts, :sharded_comments, :sharded_blog_posts_tags, :sharded_tags,
-           :members, :member_details, :organizations
+           :members, :member_details, :organizations, :cpk_orders, :cpk_order_agreements
 
   def test_preload_with_scope
     post = posts(:welcome)
@@ -1110,7 +1238,7 @@ class PreloaderTest < ActiveRecord::TestCase
     bob = bob_post.author
     mary = authors(:mary)
 
-    assert bob_post.association(:author).loaded?
+    assert_predicate bob_post.association(:author), :loaded?
     assert_not mary_post.association(:author).loaded?
 
     assert_queries(1) do
@@ -1235,7 +1363,7 @@ class PreloaderTest < ActiveRecord::TestCase
 
     assert_nothing_raised do
       ActiveRecord::Associations::Preloader.new(records: [post], associations: :author, available_records: [[some_other_record]]).call
-      assert post.association(:author).loaded?
+      assert_predicate post.association(:author), :loaded?
       assert_not_equal some_other_record, post.author
     end
   end
@@ -1246,7 +1374,7 @@ class PreloaderTest < ActiveRecord::TestCase
 
     ::ActiveRecord::Associations::Preloader.new(records: blog_posts, associations: [:comments]).call
 
-    assert blog_post.association(:comments).loaded?
+    assert_predicate blog_post.association(:comments), :loaded?
     assert_includes(blog_post.comments.to_a, sharded_comments(:great_comment_blog_post_one))
   end
 
@@ -1256,7 +1384,7 @@ class PreloaderTest < ActiveRecord::TestCase
 
     ActiveRecord::Associations::Preloader.new(records: comments, associations: :blog_post).call
 
-    assert comment.association(:blog_post).loaded?
+    assert_predicate comment.association(:blog_post), :loaded?
     assert_equal sharded_blog_posts(:great_post_blog_one), comment.blog_post
   end
 
@@ -1276,6 +1404,53 @@ class PreloaderTest < ActiveRecord::TestCase
     assert_not_empty(expected_blog_post_ids)
 
     assert_equal(expected_blog_post_ids.sort, tag.blog_posts.map(&:id).sort)
+  end
+
+  def test_preloads_has_many_on_model_with_a_composite_primary_key_through_id_attribute
+    order = cpk_orders(:cpk_groceries_order_2)
+    _shop_id, order_id = order.id
+    order_agreements = Cpk::OrderAgreement.where(order_id: order_id).to_a
+
+    assert_not_empty order_agreements
+    assert_equal order_agreements.sort, order.order_agreements.sort
+
+    loaded_order = nil
+    sql = capture_sql do
+      loaded_order = Cpk::Order.where(id: order_id).includes(:order_agreements).to_a.first
+    end
+
+    assert_equal 2, sql.size
+    preload_sql = sql.last
+
+    c = Cpk::OrderAgreement.connection
+    order_id_column = Regexp.escape(c.quote_table_name("cpk_order_agreements.order_id"))
+    order_id_constraint = /#{order_id_column} = (\?|(\d+)|\$\d)$/
+    expectation = /SELECT.*WHERE.* #{order_id_constraint}/
+
+    assert_match(expectation, preload_sql)
+    assert_equal order_agreements.sort, loaded_order.order_agreements.sort
+  end
+
+  def test_preloads_belongs_to_a_composite_primary_key_model_through_id_attribute
+    order_agreement = cpk_order_agreements(:order_agreement_three)
+    order = cpk_orders(:cpk_groceries_order_2)
+    assert_equal order, order_agreement.order
+
+    loaded_order_agreement = nil
+    sql = capture_sql do
+      loaded_order_agreement = Cpk::OrderAgreement.where(id: order_agreement.id).includes(:order).to_a.first
+    end
+
+    assert_equal 2, sql.size
+    preload_sql = sql.last
+
+    c = Cpk::Order.connection
+    order_id = Regexp.escape(c.quote_table_name("cpk_orders.id"))
+    order_constraint = /#{order_id} = (\?|(\d+)|\$\d)$/
+    expectation = /SELECT.*WHERE.* #{order_constraint}/
+
+    assert_match(expectation, preload_sql)
+    assert_equal order, loaded_order_agreement.order
   end
 end
 

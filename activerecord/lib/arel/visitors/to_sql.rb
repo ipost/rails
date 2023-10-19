@@ -568,11 +568,17 @@ module Arel # :nodoc: all
         end
 
         def visit_Arel_Table(o, collector)
-          if o.table_alias
-            collector << quote_table_name(o.name) << " " << quote_table_name(o.table_alias)
+          if Arel::Nodes::Node === o.name
+            visit o.name, collector
           else
             collector << quote_table_name(o.name)
           end
+
+          if o.table_alias
+            collector << " " << quote_table_name(o.table_alias)
+          end
+
+          collector
         end
 
         def visit_Arel_Nodes_In(o, collector)
@@ -726,6 +732,20 @@ module Arel # :nodoc: all
 
         def visit_Arel_Nodes_UnqualifiedColumn(o, collector)
           collector << quote_column_name(o.name)
+        end
+
+        def visit_Arel_Nodes_Cte(o, collector)
+          collector << quote_table_name(o.name)
+          collector << " AS "
+
+          case o.materialized
+          when true
+            collector << "MATERIALIZED "
+          when false
+            collector << "NOT MATERIALIZED "
+          end
+
+          visit o.relation, collector
         end
 
         def visit_Arel_Attributes_Attribute(o, collector)
@@ -989,19 +1009,7 @@ module Arel # :nodoc: all
         def collect_ctes(children, collector)
           children.each_with_index do |child, i|
             collector << ", " unless i == 0
-
-            case child
-            when Arel::Nodes::As
-              name = child.left.name
-              relation = child.right
-            when Arel::Nodes::TableAlias
-              name = child.name
-              relation = child.relation
-            end
-
-            collector << quote_table_name(name)
-            collector << " AS "
-            visit relation, collector
+            visit child.to_cte, collector
           end
 
           collector

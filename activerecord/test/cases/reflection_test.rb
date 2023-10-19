@@ -3,6 +3,7 @@
 require "cases/helper"
 require "models/topic"
 require "models/customer"
+require "models/comment"
 require "models/company"
 require "models/company_in_module"
 require "models/ship"
@@ -28,6 +29,7 @@ require "models/drink_designer"
 require "models/recipe"
 require "models/user_with_invalid_relation"
 require "models/hardback"
+require "models/sharded/comment"
 
 class ReflectionTest < ActiveRecord::TestCase
   include ActiveRecord::Reflection
@@ -45,25 +47,25 @@ class ReflectionTest < ActiveRecord::TestCase
 
   def test_read_attribute_names
     assert_equal(
-      %w( id title author_name author_email_address bonus_time written_on last_read content important group approved replies_count unique_replies_count parent_id parent_title type created_at updated_at ).sort,
+      %w( id title author_name author_email_address bonus_time written_on last_read content important binary_content group approved replies_count unique_replies_count parent_id parent_title type created_at updated_at ).sort,
       @first.attribute_names.sort
     )
   end
 
   def test_columns
-    assert_equal 18, Topic.columns.length
+    assert_equal 19, Topic.columns.length
   end
 
   def test_columns_are_returned_in_the_order_they_were_declared
     column_names = Topic.columns.map(&:name)
-    assert_equal %w(id title author_name author_email_address written_on bonus_time last_read content important approved replies_count unique_replies_count parent_id parent_title type group created_at updated_at), column_names
+    assert_equal %w(id title author_name author_email_address written_on bonus_time last_read content important binary_content approved replies_count unique_replies_count parent_id parent_title type group created_at updated_at), column_names
   end
 
   def test_content_columns
     content_columns        = Topic.content_columns
     content_column_names   = content_columns.map(&:name)
-    assert_equal 13, content_columns.length
-    assert_equal %w(title author_name author_email_address written_on bonus_time last_read content important group approved parent_title created_at updated_at).sort, content_column_names.sort
+    assert_equal 14, content_columns.length
+    assert_equal %w(title author_name author_email_address written_on bonus_time last_read content important binary_content group approved parent_title created_at updated_at).sort, content_column_names.sort
   end
 
   def test_column_string_type_and_limit
@@ -224,12 +226,34 @@ class ReflectionTest < ActiveRecord::TestCase
     assert_equal "companies", Firm.reflect_on_association(:clients_of_firm).table_name
   end
 
+  def test_has_many_reflection_with_array_fk_raises
+    expected_message = <<~MSG.squish
+      Passing [:firm_id, :firm_name] array to :foreign_key option
+      on the Firm#clients association is not supported.
+      Use the query_constraints: [:firm_id, :firm_name] option instead to represent a composite foreign key.
+    MSG
+    assert_raises ArgumentError, match: expected_message do
+      ActiveRecord::Reflection.create(:has_many, :clients, nil, { foreign_key: [:firm_id, :firm_name] }, Firm)
+    end
+  end
+
   def test_has_one_reflection
     reflection_for_account = ActiveRecord::Reflection.create(:has_one, :account, nil, { foreign_key: "firm_id", dependent: :destroy }, Firm)
     assert_equal reflection_for_account, Firm.reflect_on_association(:account)
 
     assert_equal Account, Firm.reflect_on_association(:account).klass
     assert_equal "accounts", Firm.reflect_on_association(:account).table_name
+  end
+
+  def has_one_reflection_with_array_fk_raises
+    expected_message = <<~MSG.squish
+      Passing [:firm_id, :firm_name] array to :foreign_key option
+      on the Firm#account association is not supported.
+      Use the query_constraints: [:firm_id, :firm_name] option instead to represent a composite foreign key.
+    MSG
+    assert_raises ArgumentError, match: expected_message do
+      ActiveRecord::Reflection.create(:has_one, :account, nil, { foreign_key: [:firm_id, :firm_name] }, Firm)
+    end
   end
 
   def test_belongs_to_inferred_foreign_key_from_assoc_name
@@ -239,6 +263,17 @@ class ReflectionTest < ActiveRecord::TestCase
     assert_equal "bar_id", Company.reflect_on_association(:bar).foreign_key
     Company.belongs_to :baz, class_name: "Xyzzy", foreign_key: "xyzzy_id"
     assert_equal "xyzzy_id", Company.reflect_on_association(:baz).foreign_key
+  end
+
+  def test_belongs_to_reflection_with_array_fk_raises
+    expected_message = <<~MSG.squish
+      Passing [:firm_id, :firm_name] array to :foreign_key option
+      on the Firm#client association is not supported.
+      Use the query_constraints: [:firm_id, :firm_name] option instead to represent a composite foreign key.
+    MSG
+    assert_raises ArgumentError, match: expected_message do
+      ActiveRecord::Reflection.create(:belongs_to, :client, nil, { foreign_key: [:firm_id, :firm_name] }, Firm)
+    end
   end
 
   def test_association_reflection_in_modules
@@ -461,6 +496,7 @@ class ReflectionTest < ActiveRecord::TestCase
   def test_foreign_key
     assert_equal "author_id", Author.reflect_on_association(:posts).foreign_key.to_s
     assert_equal "category_id", Post.reflect_on_association(:categorizations).foreign_key.to_s
+    assert_equal "comment_id", FirstPost.reflect_on_association(:comment_with_inverse).foreign_key.to_s
   end
 
   def test_foreign_key_is_inferred_from_model_name
@@ -567,13 +603,13 @@ class ReflectionTest < ActiveRecord::TestCase
 
   def test_reflect_on_association_accepts_symbols
     assert_nothing_raised do
-      assert_equal Hotel.reflect_on_association(:departments).name, :departments
+      assert_equal :departments, Hotel.reflect_on_association(:departments).name
     end
   end
 
   def test_reflect_on_association_accepts_strings
     assert_nothing_raised do
-      assert_equal Hotel.reflect_on_association("departments").name, :departments
+      assert_equal :departments, Hotel.reflect_on_association("departments").name
     end
   end
 
@@ -610,6 +646,11 @@ class ReflectionTest < ActiveRecord::TestCase
       assert_no_match "NotAClass", error.message
       assert_no_match "not_a_class", error.message
     end
+  end
+
+  def test_association_primary_key_uses_explicit_primary_key_option_as_first_priority
+    actual = Sharded::Comment.reflect_on_association(:blog_post_by_id).association_primary_key
+    assert_equal "id", actual
   end
 
   private

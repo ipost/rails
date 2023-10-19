@@ -4,7 +4,7 @@ require "thread"
 require "delegate"
 
 module ActionView
-  # = Action View Template
+  # = Action View \Template
   class Template
     extend ActiveSupport::Autoload
 
@@ -13,11 +13,11 @@ module ActionView
     # === Encodings in ActionView::Template
     #
     # ActionView::Template is one of a few sources of potential
-    # encoding issues in Rails. This is because the source for
+    # encoding issues in \Rails. This is because the source for
     # templates are usually read from disk, and Ruby (like most
     # encoding-aware programming languages) assumes that the
     # String retrieved through File IO is encoded in the
-    # <tt>default_external</tt> encoding. In Rails, the default
+    # <tt>default_external</tt> encoding. In \Rails, the default
     # <tt>default_external</tt> encoding is UTF-8.
     #
     # As a result, if a user saves their template as ISO-8859-1
@@ -36,13 +36,13 @@ module ActionView
     #    to the problem.
     # 2. The user can specify the encoding using Ruby-style
     #    encoding comments in any template engine. If such
-    #    a comment is supplied, Rails will apply that encoding
+    #    a comment is supplied, \Rails will apply that encoding
     #    to the resulting compiled source returned by the
     #    template handler.
     # 3. In all cases, we transcode the resulting String to
     #    the UTF-8.
     #
-    # This means that other parts of Rails can always assume
+    # This means that other parts of \Rails can always assume
     # that templates are encoded in UTF-8, even if the original
     # source of the template was not UTF-8.
     #
@@ -53,7 +53,7 @@ module ActionView
     # === Instructions for template handlers
     #
     # The easiest thing for you to do is to simply ignore
-    # encodings. Rails will hand you the template source
+    # encodings. \Rails will hand you the template source
     # as the default_internal (generally UTF-8), raising
     # an exception for the user before sending the template
     # to you if it could not determine the original encoding.
@@ -70,7 +70,7 @@ module ActionView
     # you may indicate that you will handle encodings yourself
     # by implementing <tt>handles_encoding?</tt> on your handler.
     #
-    # If you do, Rails will not try to encode the String
+    # If you do, \Rails will not try to encode the String
     # into the default_internal, passing you the unaltered
     # bytes tagged with the assumed encoding (from
     # default_external).
@@ -96,11 +96,58 @@ module ActionView
     #
     # Given this sub template rendering:
     #
-    #   <%= render "shared/header", { headline: "Welcome", person: person } %>
+    #   <%= render "application/header", { headline: "Welcome", person: person } %>
     #
     # You can use +local_assigns+ in the sub templates to access the local variables:
     #
     #   local_assigns[:headline] # => "Welcome"
+    #
+    # Each key in +local_assigns+ is available as a partial-local variable:
+    #
+    #   local_assigns[:headline] # => "Welcome"
+    #   headline                 # => "Welcome"
+    #
+    # Since +local_assigns+ is a +Hash+, it's compatible with Ruby 3.1's pattern
+    # matching assignment operator:
+    #
+    #   local_assigns => { headline:, **options }
+    #   headline                 # => "Welcome"
+    #   options                  # => {}
+    #
+    # Pattern matching assignment also supports variable renaming:
+    #
+    #   local_assigns => { headline: title }
+    #   title                    # => "Welcome"
+    #
+    # If a template refers to a variable that isn't passed into the view as part
+    # of the <tt>locals: { ... }</tt> Hash, the template will raise an
+    # +ActionView::Template::Error+:
+    #
+    #   <%# => raises ActionView::Template::Error %>
+    #   <% alerts.each do |alert| %>
+    #     <p><%= alert %></p>
+    #   <% end %>
+    #
+    # Since +local_assigns+ returns a +Hash+ instance, you can conditionally
+    # read a variable, then fall back to a default value when
+    # the key isn't part of the <tt>locals: { ... }</tt> options:
+    #
+    #   <% local_assigns.fetch(:alerts, []).each do |alert| %>
+    #     <p><%= alert %></p>
+    #   <% end %>
+    #
+    # Combining Ruby 3.1's pattern matching assignment with calls to
+    # +Hash#with_defaults+ enables compact partial-local variable
+    # assignments:
+    #
+    #   <% local_assigns.with_defaults(alerts: []) => { headline:, alerts: } %>
+    #
+    #   <h1><%= headline %></h1>
+    #
+    #   <% alerts.each do |alert| %>
+    #     <p><%= alert %></p>
+    #   <% end %>
+    #
 
     eager_autoload do
       autoload :Error
@@ -109,6 +156,7 @@ module ActionView
       autoload :Handlers
       autoload :HTML
       autoload :Inline
+      autoload :Types
       autoload :Sources
       autoload :Text
       autoload :Types
@@ -118,6 +166,17 @@ module ActionView
 
     singleton_class.attr_accessor :frozen_string_literal
     @frozen_string_literal = false
+
+    class << self # :nodoc:
+      def mime_types_implementation=(implementation)
+        # This method isn't thread-safe, but it's not supposed
+        # to be called after initialization
+        if self::Types != implementation
+          remove_const(:Types)
+          const_set(:Types, implementation)
+        end
+      end
+    end
 
     attr_reader :identifier, :handler
     attr_reader :variable, :format, :variant, :virtual_path
@@ -167,7 +226,7 @@ module ActionView
     # source location inside the template.
     def translate_location(backtrace_location, spot)
       if handler.respond_to?(:translate_location)
-        handler.translate_location(spot, backtrace_location, encode!)
+        handler.translate_location(spot, backtrace_location, encode!) || spot
       else
         spot
       end

@@ -64,7 +64,7 @@ class ActiveRecord::Encryption::EncryptableRecordTest < ActiveRecord::Encryption
   end
 
   test "encrypts multiple attributes with different options at the same time" do
-    post = EncryptedPost.create!\
+    post = EncryptedPost.create! \
       title: title = "The Starfleet is here!",
       body: body = "<p>the Starfleet is here, we are safe now!</p>"
 
@@ -137,7 +137,7 @@ class ActiveRecord::Encryption::EncryptableRecordTest < ActiveRecord::Encryption
   test "can't modify encrypted attributes when frozen_encryption is true" do
     post = posts(:welcome).becomes(EncryptedPost)
     post.title = "Some new title"
-    assert post.valid?
+    assert_predicate post, :valid?
 
     ActiveRecord::Encryption.with_encryption_context frozen_encryption: true do
       assert_not post.valid?
@@ -250,7 +250,7 @@ class ActiveRecord::Encryption::EncryptableRecordTest < ActiveRecord::Encryption
   if author_name_limit = EncryptedAuthor.columns_hash["name"].limit
     # No column limits in SQLite
     test "validate column sizes" do
-      assert EncryptedAuthor.new(name: "jorge").valid?
+      assert_predicate EncryptedAuthor.new(name: "jorge"), :valid?
       assert_not EncryptedAuthor.new(name: "a" * (author_name_limit + 1)).valid?
       author = EncryptedAuthor.create(name: "a" * (author_name_limit + 1))
       assert_not author.valid?
@@ -265,7 +265,7 @@ class ActiveRecord::Encryption::EncryptableRecordTest < ActiveRecord::Encryption
     assert_not book.name_previously_changed?
 
     book.update!(name: "A new title!")
-    assert book.name_previously_changed?
+    assert_predicate book, :name_previously_changed?
   end
 
   test "forces UTF-8 encoding for deterministic attributes by default" do
@@ -298,12 +298,64 @@ class ActiveRecord::Encryption::EncryptableRecordTest < ActiveRecord::Encryption
   end
 
   test "loading records with encrypted attributes defined on columns with default values" do
+    skip unless supports_insert_on_duplicate_update?
+
     EncryptedBook.insert({ format: "ebook" })
     book = EncryptedBook.last
     assert_equal "<untitled>", book.name
   end
 
+  test "can dump and load records that use encryption" do
+    book = EncryptedBook.create!
+    assert_equal book, Marshal.load(Marshal.dump(book))
+  end
+
+  test "supports decrypting data encrypted non deterministically with SHA1 when digest class is SHA256" do
+    ActiveRecord::Encryption.configure \
+      primary_key: "the primary key",
+      deterministic_key: "the deterministic key",
+      key_derivation_salt: "the salt",
+      support_sha1_for_non_deterministic_encryption: true
+
+    key_provider_sha1 = build_derived_key_provider_with OpenSSL::Digest::SHA1
+    key_provider_sha256 = build_derived_key_provider_with OpenSSL::Digest::SHA256
+
+    encrypted_post_class_sha_1 = Class.new(Post) do
+      self.table_name = "posts"
+      encrypts :title, key_provider: key_provider_sha1
+    end
+    encrypted_post_class_sha_1.create! title: "Post 1", body: "The post body", type: nil
+
+    encrypted_post_class_sha_256 = Class.new(Post) do
+      self.table_name = "posts"
+      encrypts :title, key_provider: key_provider_sha256
+    end
+
+    assert_equal "Post 1", encrypted_post_class_sha_256.last.title
+  end
+
+  test "encryption schemes are resolved when used, not when declared" do
+    OtherEncryptedPost = Class.new(Post) do
+      self.table_name = "posts"
+      encrypts :title
+    end
+
+    ActiveRecord::Encryption.configure \
+      primary_key: "the primary key",
+      deterministic_key: "the deterministic key",
+      key_derivation_salt: "the salt",
+      support_sha1_for_non_deterministic_encryption: true
+
+    assert_predicate OtherEncryptedPost.type_for_attribute(:title).scheme.previous_schemes, :one?
+  end
+
   private
+    def build_derived_key_provider_with(hash_digest_class)
+      ActiveRecord::Encryption.with_encryption_context(key_generator: ActiveRecord::Encryption::KeyGenerator.new(hash_digest_class: hash_digest_class)) do
+        ActiveRecord::Encryption::DerivedSecretKeyProvider.new(ActiveRecord::Encryption.config.primary_key)
+      end
+    end
+
     class FailingKeyProvider
       def decryption_key(message) end
 

@@ -6,8 +6,6 @@ require "support/connection_helper"
 class ConnectionTest < ActiveRecord::AbstractMysqlTestCase
   include ConnectionHelper
 
-  fixtures :comments
-
   def setup
     super
     @subscriber = SQLSubscriber.new
@@ -24,7 +22,11 @@ class ConnectionTest < ActiveRecord::AbstractMysqlTestCase
     assert_raise ActiveRecord::NoDatabaseError do
       db_config = ActiveRecord::Base.configurations.configs_for(env_name: "arunit", name: "primary")
       configuration = db_config.configuration_hash.merge(database: "inexistent_activerecord_unittest")
-      connection = ActiveRecord::Base.mysql2_connection(configuration)
+      connection = if current_adapter?(:Mysql2Adapter)
+        ActiveRecord::Base.mysql2_connection(configuration)
+      else
+        ActiveRecord::Base.trilogy_connection(configuration)
+      end
       connection.drop_table "ex", if_exists: true
     end
   end
@@ -139,17 +141,19 @@ class ConnectionTest < ActiveRecord::AbstractMysqlTestCase
     end
   end
 
-  def test_passing_arbitrary_flags_to_adapter
-    run_without_connection do |orig_connection|
-      ActiveRecord::Base.establish_connection(orig_connection.merge(flags: Mysql2::Client::COMPRESS))
-      assert_equal (Mysql2::Client::COMPRESS | Mysql2::Client::FOUND_ROWS), ActiveRecord::Base.connection.raw_connection.query_options[:flags]
+  unless current_adapter?(:TrilogyAdapter)
+    def test_passing_arbitrary_flags_to_adapter
+      run_without_connection do |orig_connection|
+        ActiveRecord::Base.establish_connection(orig_connection.merge(flags: Mysql2::Client::COMPRESS))
+        assert_equal (Mysql2::Client::COMPRESS | Mysql2::Client::FOUND_ROWS), ActiveRecord::Base.connection.raw_connection.query_options[:flags]
+      end
     end
-  end
 
-  def test_passing_flags_by_array_to_adapter
-    run_without_connection do |orig_connection|
-      ActiveRecord::Base.establish_connection(orig_connection.merge(flags: ["COMPRESS"]))
-      assert_equal ["COMPRESS", "FOUND_ROWS"], ActiveRecord::Base.connection.raw_connection.query_options[:flags]
+    def test_passing_flags_by_array_to_adapter
+      run_without_connection do |orig_connection|
+        ActiveRecord::Base.establish_connection(orig_connection.merge(flags: ["COMPRESS"]))
+        assert_equal ["COMPRESS", "FOUND_ROWS"], ActiveRecord::Base.connection.raw_connection.query_options[:flags]
+      end
     end
   end
 
@@ -196,7 +200,7 @@ class ConnectionTest < ActiveRecord::AbstractMysqlTestCase
     got_lock = @connection.get_advisory_lock(lock_name)
     assert got_lock, "get_advisory_lock should have returned true but it didn't"
 
-    assert_equal test_lock_free(lock_name), false,
+    assert_equal false, test_lock_free(lock_name),
       "expected the test advisory lock to be held but it wasn't"
 
     released_lock = @connection.release_advisory_lock(lock_name)
@@ -208,7 +212,7 @@ class ConnectionTest < ActiveRecord::AbstractMysqlTestCase
   def test_release_non_existent_advisory_lock
     lock_name = "fake lock'n'name"
     released_non_existent_lock = @connection.release_advisory_lock(lock_name)
-    assert_equal released_non_existent_lock, false,
+    assert_equal false, released_non_existent_lock,
       "expected release_advisory_lock to return false when there was no lock to release"
   end
 

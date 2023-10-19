@@ -48,7 +48,7 @@ if ActiveRecord::Base.connection.supports_check_constraints?
           assert_equal "products", constraint.table_name
           assert_equal "products_price_check", constraint.name
 
-          if current_adapter?(:Mysql2Adapter)
+          if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
             assert_equal "`price` > `discounted_price`", constraint.expression
           else
             assert_equal "price > discounted_price", constraint.expression
@@ -116,10 +116,18 @@ if ActiveRecord::Base.connection.supports_check_constraints?
           assert_equal "trades", constraint.table_name
           assert_equal "chk_rails_2189e9f96c", constraint.name
 
-          if current_adapter?(:Mysql2Adapter)
+          if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
             assert_equal "`quantity` > 0", constraint.expression
           else
             assert_equal "quantity > 0", constraint.expression
+          end
+        end
+
+        def test_add_check_constraint_with_if_not_exists_options
+          @connection.add_check_constraint :trades, "quantity > 0"
+
+          assert_nothing_raised do
+            @connection.add_check_constraint :trades, "quantity > 0", if_not_exists: true
           end
         end
 
@@ -246,7 +254,7 @@ if ActiveRecord::Base.connection.supports_check_constraints?
           assert_equal "trades", constraint.table_name
           assert_equal "price_check", constraint.name
 
-          if current_adapter?(:Mysql2Adapter)
+          if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
             assert_equal "`price` > 0", constraint.expression
           else
             assert_equal "price > 0", constraint.expression
@@ -259,7 +267,9 @@ if ActiveRecord::Base.connection.supports_check_constraints?
         def test_removing_check_constraint_with_if_exists_option
           @connection.add_check_constraint :trades, "quantity > 0", name: "quantity_check"
 
-          @connection.remove_check_constraint :trades, name: "quantity_check"
+          assert_nothing_raised do
+            @connection.remove_check_constraint :trades, name: "quantity_check", if_exists: true
+          end
 
           error = assert_raises ArgumentError do
             @connection.remove_check_constraint :trades, name: "quantity_check"

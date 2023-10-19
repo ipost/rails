@@ -26,7 +26,7 @@ module ActiveRecord
   #
   # Child records are validated unless <tt>:validate</tt> is +false+.
   #
-  # == Callbacks
+  # == \Callbacks
   #
   # Association with autosave option defines several callbacks on your
   # model (around_save, before_save, after_create, after_update). Please note that
@@ -449,11 +449,17 @@ module ActiveRecord
           if autosave && record.marked_for_destruction?
             record.destroy
           elsif autosave != false
-            key = reflection.options[:primary_key] ? public_send(reflection.options[:primary_key]) : id
+            primary_key = Array(compute_primary_key(reflection, self)).map(&:to_s)
+            primary_key_value = primary_key.map { |key| _read_attribute(key) }
 
-            if (autosave && record.changed_for_autosave?) || _record_changed?(reflection, record, key)
+            if (autosave && record.changed_for_autosave?) || _record_changed?(reflection, record, primary_key_value)
               unless reflection.through_reflection
-                record[reflection.foreign_key] = key
+                foreign_key = Array(reflection.foreign_key)
+                primary_key_foreign_key_pairs = primary_key.zip(foreign_key)
+
+                primary_key_foreign_key_pairs.each do |primary_key, foreign_key|
+                  record[foreign_key] = _read_attribute(primary_key)
+                end
                 association.set_inverse_instance(record)
               end
 
@@ -476,7 +482,10 @@ module ActiveRecord
       def association_foreign_key_changed?(reflection, record, key)
         return false if reflection.through_reflection?
 
-        record._has_attribute?(reflection.foreign_key) && record._read_attribute(reflection.foreign_key) != key
+        foreign_key = Array(reflection.foreign_key)
+        return false unless foreign_key.all? { |key| record._has_attribute?(key) }
+
+        foreign_key.map { |key| record._read_attribute(key) } != Array(key)
       end
 
       def inverse_polymorphic_association_changed?(reflection, record)
@@ -499,18 +508,19 @@ module ActiveRecord
           autosave = reflection.options[:autosave]
 
           if autosave && record.marked_for_destruction?
-            self[reflection.foreign_key] = nil
+            foreign_key = Array(reflection.foreign_key)
+            foreign_key.each { |key| self[key] = nil }
             record.destroy
           elsif autosave != false
             saved = record.save(validate: !autosave) if record.new_record? || (autosave && record.changed_for_autosave?)
 
             if association.updated?
-              primary_key = Array(compute_primary_key(reflection, record))
+              primary_key = Array(compute_primary_key(reflection, record)).map(&:to_s)
               foreign_key = Array(reflection.foreign_key)
 
               primary_key_foreign_key_pairs = primary_key.zip(foreign_key)
               primary_key_foreign_key_pairs.each do |primary_key, foreign_key|
-                association_id = record.public_send(primary_key)
+                association_id = record._read_attribute(primary_key)
                 self[foreign_key] = association_id unless self[foreign_key] == association_id
               end
               association.loaded!
@@ -526,8 +536,14 @@ module ActiveRecord
           primary_key_options
         elsif reflection.options[:query_constraints] && (query_constraints = record.class.query_constraints_list)
           query_constraints
+        elsif record.class.has_query_constraints? && !reflection.options[:foreign_key]
+          record.class.query_constraints_list
+        elsif record.class.composite_primary_key?
+          # If record has composite primary key of shape [:<tenant_key>, :id], infer primary_key as :id
+          primary_key = record.class.primary_key
+          primary_key.include?("id") ? "id" : primary_key
         else
-          :id
+          record.class.primary_key
         end
       end
 

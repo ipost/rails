@@ -15,7 +15,7 @@ module ActiveRecord
 
     attr_accessor :_new_record_before_last_commit # :nodoc:
 
-    # = Active Record Transactions
+    # = Active Record \Transactions
     #
     # \Transactions are protective blocks where SQL statements are only permanent
     # if they can all succeed as one atomic action. The classic example is a
@@ -347,9 +347,9 @@ module ActiveRecord
       @_trigger_update_callback = @_trigger_destroy_callback = false if force_restore_state
     end
 
-    # Executes +method+ within a transaction and captures its return value as a
-    # status flag. If the status is true the transaction is committed, otherwise
-    # a ROLLBACK is issued. In any case the status flag is returned.
+    # Executes a block within a transaction and captures its return value as a
+    # status flag. If the status is true, the transaction is committed,
+    # otherwise a ROLLBACK is issued. In any case, the status flag is returned.
     #
     # This method is available within the context of an ActiveRecord::Base
     # instance.

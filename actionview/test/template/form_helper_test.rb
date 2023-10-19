@@ -110,10 +110,10 @@ class FormHelperTest < ActionView::TestCase
     @comment = Comment.new
     def @post.errors
       Class.new {
-        def [](field); field == "author_name" ? ["can’t be empty"] : [] end
+        def [](field); field == "author_name" ? ["can't be empty"] : [] end
         def empty?() false end
         def count() 1 end
-        def full_messages() ["Author name can’t be empty"] end
+        def full_messages() ["Author name can't be empty"] end
       }.new
     end
     def @post.to_key; [123]; end
@@ -154,6 +154,10 @@ class FormHelperTest < ActionView::TestCase
       resources :posts do
         resources :comments
       end
+    end
+
+    namespace(:cpk) do
+      resources(:books)
     end
 
     get "/foo", to: "controller#action"
@@ -1889,6 +1893,57 @@ class FormHelperTest < ActionView::TestCase
     expected = whole_form("/posts", "special_new_post", "new_post") do
       '<input id="special_post_1_title" name="post[1][title]" type="text" aria-describedby="special_post_1_title_error">' \
       '<span id="special_post_1_title_error">is blank</span>'
+    end
+
+    assert_dom_equal expected, @rendered
+  end
+
+  def test_form_for_with_nested_attributes_field_id
+    post, comment, tag = Post.new, Comment.new, Tag.new
+    comment.relevances = [tag]
+    post.comments = [comment]
+    form_for(post) do |form|
+      form.fields_for(:comments) do |comment_form|
+        concat comment_form.field_id :relevances_attributes
+      end
+    end
+
+    expected = whole_form("/posts", "new_post", "new_post") do
+      "post_comments_attributes_0_relevances_attributes"
+    end
+
+    assert_dom_equal expected, @rendered
+  end
+
+  def test_form_for_with_nested_attributes_field_name
+    post, comment, tag = Post.new, Comment.new, Tag.new
+    comment.relevances = [tag]
+    post.comments = [comment]
+    form_for(post) do |form|
+      form.fields_for(:comments) do |comment_form|
+        concat comment_form.field_name :relevances_attributes
+      end
+    end
+
+    expected = whole_form("/posts", "new_post", "new_post") do
+      "post[comments_attributes][0][relevances_attributes]"
+    end
+
+    assert_dom_equal expected, @rendered
+  end
+
+  def test_form_for_with_nested_attributes_field_name_multiple
+    post, comment, tag = Post.new, Comment.new, Tag.new
+    comment.relevances = [tag]
+    post.comments = [comment]
+    form_for(post) do |form|
+      form.fields_for(:comments) do |comment_form|
+        concat comment_form.field_name :relevances_attributes, multiple: true
+      end
+    end
+
+    expected = whole_form("/posts", "new_post", "new_post") do
+      "post[comments_attributes][0][relevances_attributes][]"
     end
 
     assert_dom_equal expected, @rendered
@@ -4060,6 +4115,20 @@ class FormHelperTest < ActionView::TestCase
 
     form_for(@post, builder: builder_class) { }
     assert_equal 1, initialization_count, "form builder instantiated more than once"
+  end
+
+  def test_form_for_with_new_cpk_model
+    form_for(Cpk::Book.new) { }
+
+    expected = whole_form("/cpk/books", "new_cpk_book", "new_cpk_book", method: "post")
+    assert_dom_equal expected, @rendered
+  end
+
+  def test_form_for_with_persisted_cpk_model
+    form_for(Cpk::Book.new(id: [1, 2], title: "Some book")) { }
+
+    expected = whole_form("/cpk/books/1-2", "edit_cpk_book_1_2", "edit_cpk_book", method: "patch")
+    assert_dom_equal expected, @rendered
   end
 
   private

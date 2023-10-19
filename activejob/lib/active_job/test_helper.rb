@@ -54,15 +54,10 @@ module ActiveJob
       queue_adapter_changed_jobs.each { |klass| klass.disable_test_adapter }
     end
 
-    # Specifies the queue adapter to use with all Active Job test helpers.
-    #
-    # Returns an instance of the queue adapter and defaults to
-    # ActiveJob::QueueAdapters::TestAdapter.
-    #
-    # Note: The adapter provided by this method must provide some additional
-    # methods from those expected of a standard ActiveJob::QueueAdapter
-    # in order to be used with the active job test helpers. Refer to
-    # ActiveJob::QueueAdapters::TestAdapter.
+    # Returns a queue adapter instance to use with all Active Job test helpers.
+    # By default, returns an instance of ActiveJob::QueueAdapters::TestAdapter.
+    # Override this method to specify a different adapter. The adapter must
+    # implement the same interface as ActiveJob::QueueAdapters::TestAdapter.
     def queue_adapter_for_test
       ActiveJob::QueueAdapters::TestAdapter.new
     end
@@ -354,6 +349,13 @@ module ActiveJob
     #     assert_enqueued_with(at: Date.tomorrow.noon, queue: "my_queue")
     #   end
     #
+    # For keyword arguments, specify them as a hash inside an array:
+    #
+    #   def test_assert_enqueued_with_keyword_arguments
+    #     MyJob.perform_later(arg1: 'value1', arg2: 'value2')
+    #     assert_enqueued_with(job: MyJob, args: [{ arg1: 'value1', arg2: 'value2' }])
+    #   end
+    #
     # The given arguments may also be specified as matcher procs that return a
     # boolean value indicating whether a job's attribute meets certain criteria.
     #
@@ -593,10 +595,16 @@ module ActiveJob
     #     assert_performed_jobs 1
     #   end
     #
-    # If the +:at+ option is specified, then only run jobs enqueued to run
-    # immediately or before the given time
+    # If the +:at+ option is specified, then only jobs that have been enqueued
+    # to run at or before the given time will be performed. This includes jobs
+    # that have been enqueued without a time.
+    #
+    # If queue_adapter_for_test is overridden to return a different adapter,
+    # +perform_enqueued_jobs+ will merely execute the block.
     def perform_enqueued_jobs(only: nil, except: nil, queue: nil, at: nil, &block)
       return flush_enqueued_jobs(only: only, except: except, queue: queue, at: at) unless block_given?
+
+      return _assert_nothing_raised_or_warn("perform_enqueued_jobs", &block) unless using_test_adapter?
 
       validate_option(only: only, except: except)
 
@@ -636,12 +644,16 @@ module ActiveJob
     end
 
     private
+      def using_test_adapter?
+        queue_adapter.is_a?(ActiveJob::QueueAdapters::TestAdapter)
+      end
+
       def clear_enqueued_jobs
-        enqueued_jobs.clear
+        enqueued_jobs.clear if using_test_adapter?
       end
 
       def clear_performed_jobs
-        performed_jobs.clear
+        performed_jobs.clear if using_test_adapter?
       end
 
       def jobs_with(jobs, only: nil, except: nil, queue: nil, at: nil)
@@ -694,6 +706,10 @@ module ActiveJob
 
       def prepare_args_for_assertion(args)
         args.dup.tap do |arguments|
+          if arguments[:queue].is_a?(Symbol)
+            arguments[:queue] = arguments[:queue].to_s
+          end
+
           if arguments[:at].acts_like?(:time)
             at_range = arguments[:at] - 1..arguments[:at] + 1
             arguments[:at] = ->(at) { at_range.cover?(at) }
@@ -710,7 +726,7 @@ module ActiveJob
 
       def instantiate_job(payload, skip_deserialize_arguments: false)
         job = payload[:job].deserialize(payload)
-        job.scheduled_at = payload[:at].to_f if payload.key?(:at)
+        job.scheduled_at = Time.at(payload[:at]) if payload.key?(:at)
         job.send(:deserialize_arguments_if_needed) unless skip_deserialize_arguments
         job
       end

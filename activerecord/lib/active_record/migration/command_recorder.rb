@@ -2,7 +2,9 @@
 
 module ActiveRecord
   class Migration
-    # <tt>ActiveRecord::Migration::CommandRecorder</tt> records commands done during
+    # = \Migration Command Recorder
+    #
+    # +ActiveRecord::Migration::CommandRecorder+ records commands done during
     # a migration and knows how to reverse those commands. The CommandRecorder
     # knows how to invert the following commands:
     #
@@ -10,7 +12,7 @@ module ActiveRecord
     # * add_foreign_key
     # * add_check_constraint
     # * add_exclusion_constraint
-    # * add_unique_key
+    # * add_unique_constraint
     # * add_index
     # * add_reference
     # * add_timestamps
@@ -31,11 +33,13 @@ module ActiveRecord
     # * remove_foreign_key (must supply a second table)
     # * remove_check_constraint
     # * remove_exclusion_constraint
-    # * remove_unique_key
+    # * remove_unique_constraint
     # * remove_index
     # * remove_reference
     # * remove_timestamps
     # * rename_column
+    # * rename_enum (must supply a +:to+ option)
+    # * rename_enum_value (must supply a +:from+ and +:to+ option)
     # * rename_index
     # * rename_table
     class CommandRecorder
@@ -49,8 +53,8 @@ module ActiveRecord
         :change_column_comment, :change_table_comment,
         :add_check_constraint, :remove_check_constraint,
         :add_exclusion_constraint, :remove_exclusion_constraint,
-        :add_unique_key, :remove_unique_key,
-        :create_enum, :drop_enum,
+        :add_unique_constraint, :remove_unique_constraint,
+        :create_enum, :drop_enum, :rename_enum, :add_enum_value, :rename_enum_value,
       ]
       include JoinTable
 
@@ -157,7 +161,7 @@ module ActiveRecord
               add_foreign_key:   :remove_foreign_key,
               add_check_constraint: :remove_check_constraint,
               add_exclusion_constraint: :remove_exclusion_constraint,
-              add_unique_key: :remove_unique_key,
+              add_unique_constraint: :remove_unique_constraint,
               enable_extension:  :disable_extension,
               create_enum:       :drop_enum
             }.each do |cmd, inv|
@@ -202,7 +206,10 @@ module ActiveRecord
         end
 
         def invert_rename_table(args)
-          [:rename_table, args.reverse]
+          old_name, new_name, options = args
+          args = [new_name, old_name]
+          args << options if options
+          [:rename_table, args]
         end
 
         def invert_remove_column(args)
@@ -304,12 +311,19 @@ module ActiveRecord
         end
 
         def invert_add_check_constraint(args)
-          args.last.delete(:validate) if args.last.is_a?(Hash)
+          if (options = args.last).is_a?(Hash)
+            options.delete(:validate)
+            options[:if_exists] = options.delete(:if_not_exists) if options.key?(:if_not_exists)
+          end
           super
         end
 
         def invert_remove_check_constraint(args)
           raise ActiveRecord::IrreversibleMigration, "remove_check_constraint is only reversible if given an expression." if args.size < 2
+
+          if (options = args.last).is_a?(Hash)
+            options[:if_not_exists] = options.delete(:if_exists) if options.key?(:if_exists)
+          end
           super
         end
 
@@ -318,10 +332,17 @@ module ActiveRecord
           super
         end
 
-        def invert_remove_unique_key(args)
+        def invert_add_unique_constraint(args)
+          options = args.dup.extract_options!
+
+          raise ActiveRecord::IrreversibleMigration, "add_unique_constraint is not reversible if given an using_index." if options[:using_index]
+          super
+        end
+
+        def invert_remove_unique_constraint(args)
           _table, columns = args.dup.tap(&:extract_options!)
 
-          raise ActiveRecord::IrreversibleMigration, "remove_unique_key is only reversible if given an column_name." if columns.blank?
+          raise ActiveRecord::IrreversibleMigration, "remove_unique_constraint is only reversible if given an column_name." if columns.blank?
           super
         end
 
@@ -329,6 +350,26 @@ module ActiveRecord
           _enum, values = args.dup.tap(&:extract_options!)
           raise ActiveRecord::IrreversibleMigration, "drop_enum is only reversible if given a list of enum values." unless values
           super
+        end
+
+        def invert_rename_enum(args)
+          name, options = args
+
+          unless options.is_a?(Hash) && options.has_key?(:to)
+            raise ActiveRecord::IrreversibleMigration, "rename_enum is only reversible if given a :to option."
+          end
+
+          [:rename_enum, [options[:to], to: name]]
+        end
+
+        def invert_rename_enum_value(args)
+          type_name, options = args
+
+          unless options.is_a?(Hash) && options.has_key?(:from) && options.has_key?(:to)
+            raise ActiveRecord::IrreversibleMigration, "rename_enum_value is only reversible if given a :from and :to option."
+          end
+
+          [:rename_enum_value, [type_name, from: options[:to], to: options[:from]]]
         end
 
         def respond_to_missing?(method, _)

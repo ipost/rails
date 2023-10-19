@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "active_support/core_ext/string/filters"
 require "active_support/log_subscriber"
 
 module ActiveJob
@@ -9,7 +8,7 @@ module ActiveJob
 
     def enqueue(event)
       job = event.payload[:job]
-      ex = event.payload[:exception_object]
+      ex = event.payload[:exception_object] || job.enqueue_error
 
       if ex
         error do
@@ -29,7 +28,7 @@ module ActiveJob
 
     def enqueue_at(event)
       job = event.payload[:job]
-      ex = event.payload[:exception_object]
+      ex = event.payload[:exception_object] || job.enqueue_error
 
       if ex
         error do
@@ -67,7 +66,8 @@ module ActiveJob
           end
         else
           failed_enqueue_count = jobs.size - enqueued_count
-          "Failed enqueuing #{failed_enqueue_count} #{'job'.pluralize(failed_enqueue_count)} to #{adapter_name(adapter)}"
+          "Failed enqueuing #{failed_enqueue_count} #{'job'.pluralize(failed_enqueue_count)} "\
+            "to #{ActiveJob.adapter_name(adapter)}"
         end
       end
     end
@@ -76,7 +76,9 @@ module ActiveJob
     def perform_start(event)
       info do
         job = event.payload[:job]
-        "Performing #{job.class.name} (Job ID: #{job.job_id}) from #{queue_name(event)} enqueued at #{job.enqueued_at}" + args_info(job)
+        enqueue_info = job.enqueued_at.present? ? " enqueued at #{job.enqueued_at.utc.iso8601(9)}" : ""
+
+        "Performing #{job.class.name} (Job ID: #{job.job_id}) from #{queue_name(event)}" + enqueue_info + args_info(job)
       end
     end
     subscribe_log_level :perform_start, :info
@@ -137,11 +139,7 @@ module ActiveJob
 
     private
       def queue_name(event)
-        adapter_name(event.payload[:adapter]) + "(#{event.payload[:job].queue_name})"
-      end
-
-      def adapter_name(adapter)
-        adapter.class.name.demodulize.delete_suffix("Adapter")
+        ActiveJob.adapter_name(event.payload[:adapter]) + "(#{event.payload[:job].queue_name})"
       end
 
       def args_info(job)
@@ -205,7 +203,7 @@ module ActiveJob
       def enqueued_jobs_message(adapter, enqueued_jobs)
         enqueued_count = enqueued_jobs.size
         job_classes_counts = enqueued_jobs.map(&:class).tally.sort_by { |_k, v| -v }
-        "Enqueued #{enqueued_count} #{'job'.pluralize(enqueued_count)} to #{adapter_name(adapter)}"\
+        "Enqueued #{enqueued_count} #{'job'.pluralize(enqueued_count)} to #{ActiveJob.adapter_name(adapter)}"\
           " (#{job_classes_counts.map { |klass, count| "#{count} #{klass}" }.join(', ')})"
       end
   end

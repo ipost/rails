@@ -26,6 +26,8 @@ module ActiveRecord
   end
 
   module ConnectionAdapters # :nodoc:
+    # = Active Record SQLite3 Adapter
+    #
     # The SQLite3 adapter works with the sqlite3-ruby drivers
     # (available as gem from https://rubygems.org/gems/sqlite3).
     #
@@ -114,7 +116,7 @@ module ActiveRecord
               Dir.mkdir(dirname)
             rescue Errno::ENOENT => error
               if error.message.include?("No such file or directory")
-                raise ActiveRecord::NoDatabaseError
+                raise ActiveRecord::NoDatabaseError.new(connection_pool: @pool)
               else
                 raise
               end
@@ -124,6 +126,7 @@ module ActiveRecord
 
         @config[:strict] = ConnectionAdapters::SQLite3Adapter.strict_strings_by_default unless @config.key?(:strict)
         @connection_parameters = @config.merge(database: @config[:database].to_s, results_as_hash: true)
+        @use_insert_returning = @config.key?(:insert_returning) ? self.class.type_cast_config_to_boolean(@config[:insert_returning]) : true
       end
 
       def database_exists?
@@ -178,6 +181,10 @@ module ActiveRecord
         database_version >= "3.8.3"
       end
 
+      def supports_insert_returning?
+        database_version >= "3.35.0"
+      end
+
       def supports_insert_on_conflict?
         database_version >= "3.24.0"
       end
@@ -189,8 +196,14 @@ module ActiveRecord
         !@memory_database
       end
 
-      def active?
-        @raw_connection && !@raw_connection.closed?
+      def connected?
+        !(@raw_connection.nil? || @raw_connection.closed?)
+      end
+
+      alias_method :active?, :connected?
+
+      def return_value_after_insert?(column) # :nodoc:
+        column.auto_populated?
       end
 
       alias :reset! :reconnect!
@@ -241,8 +254,14 @@ module ActiveRecord
         end
       end
 
-      def all_foreign_keys_valid? # :nodoc:
-        execute("PRAGMA foreign_key_check").blank?
+      def check_all_foreign_keys_valid! # :nodoc:
+        sql = "PRAGMA foreign_key_check"
+        result = execute(sql)
+
+        unless result.blank?
+          tables = result.map { |row| row["table"] }
+          raise ActiveRecord::StatementInvalid.new("Foreign key violations found: #{tables.join(", ")}", sql: sql)
+        end
       end
 
       # SCHEMA STATEMENTS ========================================
@@ -311,7 +330,7 @@ module ActiveRecord
         validate_change_column_null_argument!(null)
 
         unless null || default.nil?
-          exec_query("UPDATE #{quote_table_name(table_name)} SET #{quote_column_name(column_name)}=#{quote(default)} WHERE #{quote_column_name(column_name)} IS NULL")
+          internal_exec_query("UPDATE #{quote_table_name(table_name)} SET #{quote_column_name(column_name)}=#{quote(default)} WHERE #{quote_column_name(column_name)} IS NULL")
         end
         alter_table(table_name) do |definition|
           definition[column_name].null = null
@@ -320,10 +339,7 @@ module ActiveRecord
 
       def change_column(table_name, column_name, type, **options) # :nodoc:
         alter_table(table_name) do |definition|
-          definition[column_name].instance_eval do
-            self.type = aliased_types(type.to_s, type)
-            self.options.merge!(options)
-          end
+          definition.change_column(column_name, type, **options)
         end
       end
 
@@ -352,14 +368,23 @@ module ActiveRecord
       alias :add_belongs_to :add_reference
 
       def foreign_keys(table_name)
-        fk_info = exec_query("PRAGMA foreign_key_list(#{quote(table_name)})", "SCHEMA")
-        fk_info.map do |row|
+        # SQLite returns 1 row for each column of composite foreign keys.
+        fk_info = internal_exec_query("PRAGMA foreign_key_list(#{quote(table_name)})", "SCHEMA")
+        grouped_fk = fk_info.group_by { |row| row["id"] }.values.each { |group| group.sort_by! { |row| row["seq"] } }
+        grouped_fk.map do |group|
+          row = group.first
           options = {
-            column: row["from"],
-            primary_key: row["to"],
             on_delete: extract_foreign_key_action(row["on_delete"]),
             on_update: extract_foreign_key_action(row["on_update"])
           }
+
+          if group.one?
+            options[:column] = row["from"]
+            options[:primary_key] = row["to"]
+          else
+            options[:column] = group.map { |row| row["from"] }
+            options[:primary_key] = group.map { |row| row["to"] }
+          end
           ForeignKeyDefinition.new(table_name, row["table"], options)
         end
       end
@@ -379,11 +404,16 @@ module ActiveRecord
           end
         end
 
+        sql << " RETURNING #{insert.returning}" if insert.returning
         sql
       end
 
       def shared_cache? # :nodoc:
         @config.fetch(:flags, 0).anybits?(::SQLite3::Constants::Open::SHAREDCACHE)
+      end
+
+      def use_insert_returning?
+        @use_insert_returning
       end
 
       def get_database_version # :nodoc:
@@ -426,7 +456,7 @@ module ActiveRecord
         end
 
         def table_structure(table_name)
-          structure = exec_query("PRAGMA table_info(#{quote_table_name(table_name)})", "SCHEMA")
+          structure = internal_exec_query("PRAGMA table_info(#{quote_table_name(table_name)})", "SCHEMA")
           raise(ActiveRecord::StatementInvalid, "Could not find table '#{table_name}'") if structure.empty?
           table_structure_with_collation(table_name, structure)
         end
@@ -437,10 +467,10 @@ module ActiveRecord
           when /^null$/i
             nil
           # Quoted types
-          when /^'(.*)'$/m
+          when /^'([^|]*)'$/m
             $1.gsub("''", "'")
           # Quoted types
-          when /^"(.*)"$/m
+          when /^"([^|]*)"$/m
             $1.gsub('""', '"')
           # Numeric types
           when /\A-?\d+(\.\d*)?\z/
@@ -460,7 +490,7 @@ module ActiveRecord
         end
 
         def has_default_function?(default_value, default)
-          !default_value && %r{\w+\(.*\)|CURRENT_TIME|CURRENT_DATE|CURRENT_TIMESTAMP}.match?(default)
+          !default_value && %r{\w+\(.*\)|CURRENT_TIME|CURRENT_DATE|CURRENT_TIMESTAMP|\|\|}.match?(default)
         end
 
         # See: https://www.sqlite.org/lang_altertable.html
@@ -526,6 +556,7 @@ module ActiveRecord
               if column.has_default?
                 type = lookup_cast_type_from_column(column)
                 default = type.deserialize(column.default)
+                default = -> { column.default_function } if default.nil?
               end
 
               column_options = {
@@ -590,7 +621,7 @@ module ActiveRecord
           quoted_columns = columns.map { |col| quote_column_name(col) } * ","
           quoted_from_columns = from_columns_to_copy.map { |col| quote_column_name(col) } * ","
 
-          exec_query("INSERT INTO #{quote_table_name(to)} (#{quoted_columns})
+          internal_exec_query("INSERT INTO #{quote_table_name(to)} (#{quoted_columns})
                      SELECT #{quoted_from_columns} FROM #{quote_table_name(from)}")
         end
 
@@ -600,13 +631,13 @@ module ActiveRecord
           # Older versions of SQLite return:
           #   column *column_name* is not unique
           if exception.message.match?(/(column(s)? .* (is|are) not unique|UNIQUE constraint failed: .*)/i)
-            RecordNotUnique.new(message, sql: sql, binds: binds)
+            RecordNotUnique.new(message, sql: sql, binds: binds, connection_pool: @pool)
           elsif exception.message.match?(/(.* may not be NULL|NOT NULL constraint failed: .*)/i)
-            NotNullViolation.new(message, sql: sql, binds: binds)
+            NotNullViolation.new(message, sql: sql, binds: binds, connection_pool: @pool)
           elsif exception.message.match?(/FOREIGN KEY constraint failed/i)
-            InvalidForeignKey.new(message, sql: sql, binds: binds)
+            InvalidForeignKey.new(message, sql: sql, binds: binds, connection_pool: @pool)
           elsif exception.message.match?(/called on a closed database/i)
-            ConnectionNotEstablished.new(exception)
+            ConnectionNotEstablished.new(exception, connection_pool: @pool)
           else
             super
           end
@@ -670,6 +701,8 @@ module ActiveRecord
 
         def connect
           @raw_connection = self.class.new_client(@connection_parameters)
+        rescue ConnectionNotEstablished => ex
+          raise ex.set_pool(@pool)
         end
 
         def reconnect
@@ -681,9 +714,42 @@ module ActiveRecord
         end
 
         def configure_connection
-          @raw_connection.busy_timeout(self.class.type_cast_config_to_integer(@config[:timeout])) if @config[:timeout]
+          if @config[:timeout] && @config[:retries]
+            raise ArgumentError, "Cannot specify both timeout and retries arguments"
+          elsif @config[:timeout]
+            @raw_connection.busy_timeout(self.class.type_cast_config_to_integer(@config[:timeout]))
+          elsif @config[:retries]
+            retries = self.class.type_cast_config_to_integer(@config[:retries])
+            raw_connection.busy_handler do |count|
+              count <= retries
+            end
+          end
 
-          execute("PRAGMA foreign_keys = ON", "SCHEMA")
+          super
+
+          # Enforce foreign key constraints
+          # https://www.sqlite.org/pragma.html#pragma_foreign_keys
+          # https://www.sqlite.org/foreignkeys.html
+          raw_execute("PRAGMA foreign_keys = ON", "SCHEMA")
+          unless @memory_database
+            # Journal mode WAL allows for greater concurrency (many readers + one writer)
+            # https://www.sqlite.org/pragma.html#pragma_journal_mode
+            raw_execute("PRAGMA journal_mode = WAL", "SCHEMA")
+            # Set more relaxed level of database durability
+            # 2 = "FULL" (sync on every write), 1 = "NORMAL" (sync every 1000 written pages) and 0 = "NONE"
+            # https://www.sqlite.org/pragma.html#pragma_synchronous
+            raw_execute("PRAGMA synchronous = NORMAL", "SCHEMA")
+            # Set the global memory map so all processes can share some data
+            # https://www.sqlite.org/pragma.html#pragma_mmap_size
+            # https://www.sqlite.org/mmap.html
+            raw_execute("PRAGMA mmap_size = #{128.megabytes}", "SCHEMA")
+          end
+          # Impose a limit on the WAL file to prevent unlimited growth
+          # https://www.sqlite.org/pragma.html#pragma_journal_size_limit
+          raw_execute("PRAGMA journal_size_limit = #{64.megabytes}", "SCHEMA")
+          # Set the local connection cache to 2000 pages
+          # https://www.sqlite.org/pragma.html#pragma_cache_size
+          raw_execute("PRAGMA cache_size = 2000", "SCHEMA")
         end
     end
     ActiveSupport.run_load_hooks(:active_record_sqlite3adapter, SQLite3Adapter)

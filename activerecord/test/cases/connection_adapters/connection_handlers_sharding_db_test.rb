@@ -38,13 +38,14 @@ module ActiveRecord
           @prev_configs, ActiveRecord::Base.configurations = ActiveRecord::Base.configurations, config
 
           ActiveRecord::Base.connects_to(shards: {
-            default: { writing: :primary },
-            shard_one: { writing: :primary_shard_one }
+            default: { writing: :primary, reading: :primary },
+            shard_one: { writing: :primary_shard_one, reading: :primary_shard_one }
           })
 
           base_pool = ActiveRecord::Base.connection_handler.retrieve_connection_pool("ActiveRecord::Base")
           default_pool = ActiveRecord::Base.connection_handler.retrieve_connection_pool("ActiveRecord::Base", shard: :default)
 
+          assert_equal [:default, :shard_one], ActiveRecord::Base.connection_handler.send(:get_pool_manager, "ActiveRecord::Base").shard_names
           assert_equal base_pool, default_pool
           assert_equal "test/db/primary.sqlite3", default_pool.db_config.database
           assert_equal "primary", default_pool.db_config.name
@@ -307,6 +308,14 @@ module ActiveRecord
       end
 
       class ShardConnectionTestModelB < SomeOtherBase
+      end
+
+      def test_default_shard_is_chosen_by_first_key_or_default
+        SecondaryBase.connects_to shards: { not_default: { writing: { database: ":memory:", adapter: "sqlite3" } } }
+        SomeOtherBase.connects_to database: { writing: { database: ":memory:", adapter: "sqlite3" } }
+
+        assert_equal :not_default, SecondaryBase.default_shard
+        assert_equal :default, SomeOtherBase.default_shard
       end
 
       def test_same_shards_across_clusters

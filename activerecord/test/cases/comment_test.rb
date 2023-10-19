@@ -122,7 +122,7 @@ if ActiveRecord::Base.connection.supports_comments?
       column = Commented.columns_hash["new_rating"]
 
       assert_equal :string, column.type
-      assert_equal column.comment, "I am running out of imagination"
+      assert_equal "I am running out of imagination", column.comment
     end
 
     def test_schema_dump_with_comments
@@ -182,8 +182,8 @@ if ActiveRecord::Base.connection.supports_comments?
       column = Commented.columns_hash["id"]
       assert_equal "Edited column comment", column.comment
 
-      if current_adapter?(:Mysql2Adapter)
-        assert column.auto_increment?
+      if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
+        assert_predicate column, :auto_increment?
       end
     end
 

@@ -20,7 +20,7 @@ module ActiveRecord
   # For example the following migration is not reversible.
   # Rolling back this migration will raise an ActiveRecord::IrreversibleMigration error.
   #
-  #   class IrreversibleMigrationExample < ActiveRecord::Migration[7.1]
+  #   class IrreversibleMigrationExample < ActiveRecord::Migration[7.2]
   #     def change
   #       create_table :distributors do |t|
   #         t.string :zipcode
@@ -38,7 +38,7 @@ module ActiveRecord
   #
   # 1. Define <tt>#up</tt> and <tt>#down</tt> methods instead of <tt>#change</tt>:
   #
-  #  class ReversibleMigrationExample < ActiveRecord::Migration[7.1]
+  #  class ReversibleMigrationExample < ActiveRecord::Migration[7.2]
   #    def up
   #      create_table :distributors do |t|
   #        t.string :zipcode
@@ -63,7 +63,7 @@ module ActiveRecord
   #
   # 2. Use the #reversible method in <tt>#change</tt> method:
   #
-  #   class ReversibleMigrationExample < ActiveRecord::Migration[7.1]
+  #   class ReversibleMigrationExample < ActiveRecord::Migration[7.2]
   #     def change
   #       create_table :distributors do |t|
   #         t.string :zipcode
@@ -234,7 +234,7 @@ module ActiveRecord
   #
   # Example of a simple migration:
   #
-  #   class AddSsl < ActiveRecord::Migration[7.1]
+  #   class AddSsl < ActiveRecord::Migration[7.2]
   #     def up
   #       add_column :accounts, :ssl_enabled, :boolean, default: true
   #     end
@@ -254,7 +254,7 @@ module ActiveRecord
   #
   # Example of a more complex migration that also needs to initialize data:
   #
-  #   class AddSystemSettings < ActiveRecord::Migration[7.1]
+  #   class AddSystemSettings < ActiveRecord::Migration[7.2]
   #     def up
   #       create_table :system_settings do |t|
   #         t.string  :name
@@ -362,12 +362,12 @@ module ActiveRecord
   # == Irreversible transformations
   #
   # Some transformations are destructive in a manner that cannot be reversed.
-  # Migrations of that kind should raise an <tt>ActiveRecord::IrreversibleMigration</tt>
+  # Migrations of that kind should raise an ActiveRecord::IrreversibleMigration
   # exception in their +down+ method.
   #
-  # == Running migrations from within Rails
+  # == Running migrations from within \Rails
   #
-  # The Rails package has several tools to help create and apply migrations.
+  # The \Rails package has several tools to help create and apply migrations.
   #
   # To generate a new migration, you can use
   #   bin/rails generate migration MyNewMigration
@@ -382,7 +382,7 @@ module ActiveRecord
   #   bin/rails generate migration add_fieldname_to_tablename fieldname:string
   #
   # This will generate the file <tt>timestamp_add_fieldname_to_tablename.rb</tt>, which will look like this:
-  #   class AddFieldnameToTablename < ActiveRecord::Migration[7.1]
+  #   class AddFieldnameToTablename < ActiveRecord::Migration[7.2]
   #     def change
   #       add_column :tablenames, :fieldname, :string
   #     end
@@ -401,14 +401,14 @@ module ActiveRecord
   # wish to rollback last few migrations. <tt>bin/rails db:rollback STEP=2</tt> will rollback
   # the latest two migrations.
   #
-  # If any of the migrations throw an <tt>ActiveRecord::IrreversibleMigration</tt> exception,
+  # If any of the migrations throw an ActiveRecord::IrreversibleMigration exception,
   # that step will fail and you'll have some manual work to do.
   #
   # == More examples
   #
   # Not all migrations change the schema. Some just fix the data:
   #
-  #   class RemoveEmptyTags < ActiveRecord::Migration[7.1]
+  #   class RemoveEmptyTags < ActiveRecord::Migration[7.2]
   #     def up
   #       Tag.all.each { |tag| tag.destroy if tag.pages.empty? }
   #     end
@@ -421,7 +421,7 @@ module ActiveRecord
   #
   # Others remove columns when they migrate up instead of down:
   #
-  #   class RemoveUnnecessaryItemAttributes < ActiveRecord::Migration[7.1]
+  #   class RemoveUnnecessaryItemAttributes < ActiveRecord::Migration[7.2]
   #     def up
   #       remove_column :items, :incomplete_items_count
   #       remove_column :items, :completed_items_count
@@ -435,7 +435,7 @@ module ActiveRecord
   #
   # And sometimes you need to do something in SQL not abstracted directly by migrations:
   #
-  #   class MakeJoinUnique < ActiveRecord::Migration[7.1]
+  #   class MakeJoinUnique < ActiveRecord::Migration[7.2]
   #     def up
   #       execute "ALTER TABLE `pages_linked_pages` ADD UNIQUE `page_id_linked_page_id` (`page_id`,`linked_page_id`)"
   #     end
@@ -452,7 +452,7 @@ module ActiveRecord
   # <tt>Base#reset_column_information</tt> in order to ensure that the model has the
   # latest column data from after the new column was added. Example:
   #
-  #   class AddPeopleSalary < ActiveRecord::Migration[7.1]
+  #   class AddPeopleSalary < ActiveRecord::Migration[7.2]
   #     def up
   #       add_column :people, :salary, :integer
   #       Person.reset_column_information
@@ -488,7 +488,7 @@ module ActiveRecord
   #
   # == Timestamped Migrations
   #
-  # By default, Rails generates migrations that look like:
+  # By default, \Rails generates migrations that look like:
   #
   #    20080717013526_your_migration_name.rb
   #
@@ -510,7 +510,7 @@ module ActiveRecord
   # To define a reversible migration, define the +change+ method in your
   # migration like this:
   #
-  #   class TenderloveMigration < ActiveRecord::Migration[7.1]
+  #   class TenderloveMigration < ActiveRecord::Migration[7.2]
   #     def change
   #       create_table(:horses) do |t|
   #         t.column :content, :text
@@ -527,11 +527,11 @@ module ActiveRecord
   # as before.
   #
   # If a command cannot be reversed, an
-  # <tt>ActiveRecord::IrreversibleMigration</tt> exception will be raised when
+  # ActiveRecord::IrreversibleMigration exception will be raised when
   # the migration is moving down.
   #
   # For a list of commands that are reversible, please see
-  # <tt>ActiveRecord::Migration::CommandRecorder</tt>.
+  # +ActiveRecord::Migration::CommandRecorder+.
   #
   # == Transactional Migrations
   #
@@ -540,7 +540,7 @@ module ActiveRecord
   # can't execute inside a transaction though, and for these situations
   # you can turn the automatic transactions off.
   #
-  #   class ChangeEnum < ActiveRecord::Migration[7.1]
+  #   class ChangeEnum < ActiveRecord::Migration[7.2]
   #     disable_ddl_transaction!
   #
   #     def up
@@ -559,6 +559,38 @@ module ActiveRecord
 
     # This must be defined before the inherited hook, below
     class Current < Migration # :nodoc:
+      def create_table(table_name, **options)
+        if block_given?
+          super { |t| yield compatible_table_definition(t) }
+        else
+          super
+        end
+      end
+
+      def change_table(table_name, **options)
+        if block_given?
+          super { |t| yield compatible_table_definition(t) }
+        else
+          super
+        end
+      end
+
+      def create_join_table(table_1, table_2, **options)
+        if block_given?
+          super { |t| yield compatible_table_definition(t) }
+        else
+          super
+        end
+      end
+
+      def drop_table(table_name, **options)
+        if block_given?
+          super { |t| yield compatible_table_definition(t) }
+        else
+          super
+        end
+      end
+
       def compatible_table_definition(t)
         t
       end
@@ -642,10 +674,38 @@ module ActiveRecord
         delegate || superclass.nearest_delegate
       end
 
-      # Raises <tt>ActiveRecord::PendingMigrationError</tt> error if any migrations are pending.
+      # Raises ActiveRecord::PendingMigrationError error if any migrations are pending.
+      #
+      # This is deprecated in favor of +check_all_pending!+
       def check_pending!(connection = ActiveRecord::Tasks::DatabaseTasks.migration_connection)
-        if pending_migrations = connection.migration_context.pending_migrations
+        ActiveRecord.deprecator.warn(<<-MSG.squish)
+          The `check_pending!` method is deprecated in favor of `check_all_pending!`. The
+          new implementation will loop through all available database configurations and find
+          pending migrations. The prior implementation did not permit this.
+        MSG
+
+        pending_migrations = connection.migration_context.open.pending_migrations
+
+        if pending_migrations.any?
           raise ActiveRecord::PendingMigrationError.new(pending_migrations: pending_migrations)
+        end
+      end
+
+      # Raises ActiveRecord::PendingMigrationError error if any migrations are pending
+      # for all database configurations in an environment.
+      def check_all_pending!
+        pending_migrations = []
+
+        ActiveRecord::Tasks::DatabaseTasks.with_temporary_connection_for_each(env: env) do |connection|
+          if pending = connection.migration_context.open.pending_migrations
+            pending_migrations << pending
+          end
+        end
+
+        migrations = pending_migrations.flatten
+
+        if migrations.any?
+          raise ActiveRecord::PendingMigrationError.new(pending_migrations: migrations)
         end
       end
 
@@ -750,7 +810,7 @@ module ActiveRecord
     # and create the table 'apples' on the way up, and the reverse
     # on the way down.
     #
-    #   class FixTLMigration < ActiveRecord::Migration[7.1]
+    #   class FixTLMigration < ActiveRecord::Migration[7.2]
     #     def change
     #       revert do
     #         create_table(:horses) do |t|
@@ -769,7 +829,7 @@ module ActiveRecord
     #
     #   require_relative "20121212123456_tenderlove_migration"
     #
-    #   class FixupTLMigration < ActiveRecord::Migration[7.1]
+    #   class FixupTLMigration < ActiveRecord::Migration[7.2]
     #     def change
     #       revert TenderloveMigration
     #
@@ -820,7 +880,7 @@ module ActiveRecord
     # when the three columns 'first_name', 'last_name' and 'full_name' exist,
     # even when migrating down:
     #
-    #    class SplitNameMigration < ActiveRecord::Migration[7.1]
+    #    class SplitNameMigration < ActiveRecord::Migration[7.2]
     #      def change
     #        add_column :users, :first_name, :string
     #        add_column :users, :last_name, :string
@@ -848,7 +908,7 @@ module ActiveRecord
     # In the following example, the new column +published+ will be given
     # the value +true+ for all existing records.
     #
-    #    class AddPublishedToPosts < ActiveRecord::Migration[7.1]
+    #    class AddPublishedToPosts < ActiveRecord::Migration[7.2]
     #      def change
     #        add_column :posts, :published, :boolean, default: false
     #        up_only do
@@ -969,9 +1029,7 @@ module ActiveRecord
     end
 
     def method_missing(method, *arguments, &block)
-      arg_list = arguments.map(&:inspect) * ", "
-
-      say_with_time "#{method}(#{arg_list})" do
+      say_with_time "#{method}(#{format_arguments(arguments)})" do
         unless connection.respond_to? :revert
           unless arguments.empty? || [:execute, :enable_extension, :disable_extension].include?(method)
             arguments[0] = proper_table_name(arguments.first, table_name_options)
@@ -1080,6 +1138,22 @@ module ActiveRecord
         end
       end
 
+      def format_arguments(arguments)
+        arg_list = arguments[0...-1].map(&:inspect)
+        last_arg = arguments.last
+        if last_arg.is_a?(Hash)
+          last_arg = last_arg.reject { |k, _v| internal_option?(k) }
+          arg_list << last_arg.inspect unless last_arg.empty?
+        else
+          arg_list << last_arg.inspect
+        end
+        arg_list.join(", ")
+      end
+
+      def internal_option?(option_name)
+        option_name.start_with?("_")
+      end
+
       def command_recorder
         CommandRecorder.new(connection)
       end
@@ -1112,12 +1186,14 @@ module ActiveRecord
       end
   end
 
+  # = \Migration \Context
+  #
   # MigrationContext sets the context in which a migration is run.
   #
   # A migration context requires the path to the migrations is set
   # in the +migrations_paths+ parameter. Optionally a +schema_migration+
   # class can be provided. Multiple database applications will instantiate
-  # a +SchemaMigration+ object per database. From the Rake tasks, Rails will
+  # a +SchemaMigration+ object per database. From the Rake tasks, \Rails will
   # handle this for you.
   class MigrationContext
     attr_reader :migrations_paths, :schema_migration, :internal_metadata

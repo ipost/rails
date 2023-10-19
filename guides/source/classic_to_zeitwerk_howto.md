@@ -88,8 +88,8 @@ How to Verify The Application Runs in `zeitwerk` Mode?
 
 To verify the application is running in `zeitwerk` mode, execute
 
-```
-bin/rails runner 'p Rails.autoloaders.zeitwerk_enabled?'
+```bash
+$ bin/rails runner 'p Rails.autoloaders.zeitwerk_enabled?'
 ```
 
 If that prints `true`, `zeitwerk` mode is enabled.
@@ -119,21 +119,21 @@ config.eager_load_paths << "#{Rails.root}/extras"
 
 Once `zeitwerk` mode is enabled and the configuration of eager load paths double-checked, please run:
 
-```
-bin/rails zeitwerk:check
+```bash
+$ bin/rails zeitwerk:check
 ```
 
 A successful check looks like this:
 
-```
-% bin/rails zeitwerk:check
+```bash
+$ bin/rails zeitwerk:check
 Hold on, I am eager loading the application.
 All is good!
 ```
 
 There can be additional output depending on the application configuration, but the last "All is good!" is what you are looking for.
 
-If the double-check explained in the previous section determined actually there have to be some custom autoload paths outside the eager load paths, the task will detect and warn about them. However, if the test suite loads those files successfully, you're good.
+If the double-check explained in the previous section determined that there have to be some custom autoload paths outside the eager load paths, the task will detect and warn about them. However, if the test suite loads those files successfully, you're good.
 
 Now, if there's any file that does not define the expected constant, the task will tell you. It does so one file at a time, because if it moved on, the failure loading one file could cascade into other failures unrelated to the check we want to run and the error report would be confusing.
 
@@ -141,13 +141,13 @@ If there's one constant reported, fix that particular one and run the task again
 
 Take for example:
 
-```
-% bin/rails zeitwerk:check
+```bash
+$ bin/rails zeitwerk:check
 Hold on, I am eager loading the application.
 expected file app/models/vat.rb to define constant Vat
 ```
 
-VAT is an European tax. The file `app/models/vat.rb` defines `VAT` but the autoloader expects `Vat`, why?
+VAT is a European tax. The file `app/models/vat.rb` defines `VAT` but the autoloader expects `Vat`, why?
 
 ### Acronyms
 
@@ -177,8 +177,8 @@ With this option you have more control, because only files called exactly `vat.r
 
 With that in place, the check passes!
 
-```
-% bin/rails zeitwerk:check
+```bash
+$ bin/rails zeitwerk:check
 Hold on, I am eager loading the application.
 All is good!
 ```
@@ -198,7 +198,7 @@ By default, `app/models/concerns` belongs to the autoload paths and therefore it
 
 If your application uses `Concerns` as namespace, you have two options:
 
-1. Remove the `Concerns` namespace from those classes and modules and update client code.
+1. Remove the `Concerns` namespace from those classes and modules and update the client code.
 2. Leave things as they are by removing `app/models/concerns` from the autoload paths:
 
   ```ruby
@@ -455,7 +455,7 @@ Delete any `require` Calls
 
 In my experience, projects generally do not do this. But I've seen a couple, and have heard of a few others.
 
-In Rails application you use `require` exclusively to load code from `lib` or from 3rd party like gem dependencies or the standard library. **Never load autoloadable application code with `require`**. See why this was a bad idea already in `classic` [here](https://guides.rubyonrails.org/v6.1/autoloading_and_reloading_constants_classic_mode.html#autoloading-and-require).
+In a Rails application you use `require` exclusively to load code from `lib` or from 3rd party like gem dependencies or the standard library. **Never load autoloadable application code with `require`**. See why this was a bad idea already in `classic` [here](https://guides.rubyonrails.org/v6.1/autoloading_and_reloading_constants_classic_mode.html#autoloading-and-require).
 
 ```ruby
 require "nokogiri" # GOOD

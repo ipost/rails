@@ -475,7 +475,7 @@ class RelationTest < ActiveRecord::TestCase
 
   def test_finding_with_sanitized_order
     query = Tag.order([Arel.sql("field(id, ?)"), [1, 3, 2]]).to_sql
-    if current_adapter?(:Mysql2Adapter)
+    if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       assert_match(/field\(id, '1','3','2'\)/, query)
     else
       assert_match(/field\(id, 1,3,2\)/, query)
@@ -490,7 +490,7 @@ class RelationTest < ActiveRecord::TestCase
 
   def test_finding_with_arel_sql_order
     query = Tag.order(Arel.sql("field(id, ?)", [1, 3, 2])).to_sql
-    if current_adapter?(:Mysql2Adapter)
+    if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       assert_match(/field\(id, '1', '3', '2'\)/, query)
     else
       assert_match(/field\(id, 1, 3, 2\)/, query)
@@ -599,7 +599,7 @@ class RelationTest < ActiveRecord::TestCase
 
   def test_find_with_readonly_option
     Developer.all.each { |d| assert_not d.readonly? }
-    Developer.all.readonly.each { |d| assert d.readonly? }
+    Developer.all.readonly.each { |d| assert_predicate d, :readonly? }
   end
 
   def test_eager_association_loading_of_stis_with_multiple_references
@@ -1183,7 +1183,7 @@ class RelationTest < ActiveRecord::TestCase
     posts = Post.all
 
     assert_queries(3) do
-      assert posts.any? # Uses COUNT()
+      assert_predicate posts, :any? # Uses COUNT()
       assert_not_predicate posts.where(id: nil), :any?
 
       assert posts.any? { |p| p.id > 0 }
@@ -1200,7 +1200,7 @@ class RelationTest < ActiveRecord::TestCase
     posts = Post.all
 
     assert_queries(2) do
-      assert posts.many? # Uses COUNT()
+      assert_predicate posts, :many? # Uses COUNT()
       assert posts.many? { |p| p.id > 0 }
       assert_not posts.many? { |p| p.id < 2 }
     end
@@ -1266,7 +1266,7 @@ class RelationTest < ActiveRecord::TestCase
     posts.where.not(id: Post.first).destroy_all
 
     assert_equal 1, posts.size
-    assert posts.one?
+    assert_predicate posts, :one?
   end
 
   def test_to_a_should_dup_target
@@ -1410,7 +1410,7 @@ class RelationTest < ActiveRecord::TestCase
   def test_first_or_create_with_array
     several_green_birds = Bird.where(color: "green").first_or_create([{ name: "parrot" }, { name: "parakeet" }])
     assert_kind_of Array, several_green_birds
-    several_green_birds.each { |bird| assert bird.persisted? }
+    several_green_birds.each { |bird| assert_predicate bird, :persisted? }
 
     same_parrot = Bird.where(color: "green").first_or_create([{ name: "hummingbird" }, { name: "macaw" }])
     assert_kind_of Bird, same_parrot
@@ -1464,7 +1464,7 @@ class RelationTest < ActiveRecord::TestCase
   def test_first_or_create_bang_with_valid_array
     several_green_birds = Bird.where(color: "green").first_or_create!([{ name: "parrot" }, { name: "parakeet" }])
     assert_kind_of Array, several_green_birds
-    several_green_birds.each { |bird| assert bird.persisted? }
+    several_green_birds.each { |bird| assert_predicate bird, :persisted? }
 
     same_parrot = Bird.where(color: "green").first_or_create!([{ name: "hummingbird" }, { name: "macaw" }])
     assert_kind_of Bird, same_parrot
@@ -1561,8 +1561,8 @@ class RelationTest < ActiveRecord::TestCase
       record.color = "blue"
     end
     assert_predicate bird, :persisted?
-    assert_equal bird.name, "bob"
-    assert_equal bird.color, "blue"
+    assert_equal "bob", bird.name
+    assert_equal "blue", bird.color
 
     assert_equal bird, Bird.find_or_create_by(name: "bob", color: "blue")
   end
@@ -1669,8 +1669,8 @@ class RelationTest < ActiveRecord::TestCase
       record.color = "blue"
     end
     assert_predicate bird, :new_record?
-    assert_equal bird.name, "bob"
-    assert_equal bird.color, "blue"
+    assert_equal "bob", bird.name
+    assert_equal "blue", bird.color
     bird.save!
 
     assert_equal bird, Bird.find_or_initialize_by(name: "bob", color: "blue")
@@ -1973,11 +1973,11 @@ class RelationTest < ActiveRecord::TestCase
     topics = Topic.all
 
     # the first query is triggered because there are no topics yet.
-    assert_queries(1) { assert topics.present? }
+    assert_queries(1) { assert_predicate topics, :present? }
 
     # checking if there are topics is used before you actually display them,
     # thus it shouldn't invoke an extra count query.
-    assert_no_queries { assert topics.present? }
+    assert_no_queries { assert_predicate topics, :present? }
     assert_no_queries { assert_not topics.blank? }
 
     # shows count of topics and loops after loading the query should not trigger extra queries either.
@@ -2329,6 +2329,20 @@ class RelationTest < ActiveRecord::TestCase
     assert_equal Post.count, posts.unscope(where: :title).count
   end
 
+  def test_unscope_with_double_dot_where
+    posts = Post.where(id: 1..2)
+
+    assert_equal 2, posts.count
+    assert_equal Post.count, posts.unscope(where: :id).count
+  end
+
+  def test_unscope_with_triple_dot_where
+    posts = Post.where(id: 1...3)
+
+    assert_equal 2, posts.count
+    assert_equal Post.count, posts.unscope(where: :id).count
+  end
+
   def test_locked_should_not_build_arel
     posts = Post.locked
     assert_predicate posts, :locked?
@@ -2451,4 +2465,54 @@ class RelationTest < ActiveRecord::TestCase
         predicate_builder: predicate_builder
       )
     end
+end
+
+class CreateOrFindByWithinTransactions < ActiveRecord::TestCase
+  unless current_adapter?(:SQLite3Adapter)
+    self.use_transactional_tests = false
+
+    def teardown
+      Subscriber.delete_all
+    end
+
+    def test_multiple_find_or_create_by_within_transactions
+      duel { Subscriber.find_or_create_by(nick: "bob") }
+    end
+
+    def test_multiple_find_or_create_by_bang_within_transactions
+      duel { Subscriber.find_or_create_by!(nick: "bob") }
+    end
+
+    private
+      def duel
+        assert_nil Subscriber.find_by(nick: "bob")
+
+        a_wakeup = Concurrent::Event.new
+        b_wakeup = Concurrent::Event.new
+
+        a = Thread.new do
+          Subscriber.transaction do
+            a_wakeup.wait
+            yield
+            b_wakeup.set
+          end
+        end
+
+        b = Thread.new do
+          Subscriber.transaction do
+            # Read the record prematurely for MySQL REPEATABLE READ to kick in
+            Subscriber.find_by(nick: "bob")
+
+            a_wakeup.set
+            b_wakeup.wait
+            yield
+          end
+        end
+
+        a.join
+        b.join
+
+        assert_equal 1, Subscriber.where(nick: "bob").count
+      end
+  end
 end

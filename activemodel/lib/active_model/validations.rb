@@ -31,7 +31,7 @@ module ActiveModel
   #   person.invalid?                 # => true
   #   person.errors.messages          # => {first_name:["starts with z."]}
   #
-  # Note that <tt>ActiveModel::Validations</tt> automatically adds an +errors+
+  # Note that +ActiveModel::Validations+ automatically adds an +errors+
   # method to your instances initialized with a new ActiveModel::Errors
   # object, so there is no need for you to do this manually.
   module Validations
@@ -326,7 +326,7 @@ module ActiveModel
     #
     #   person = Person.new
     #   person.valid? # => false
-    #   person.errors # => #<ActiveModel::Errors:0x007fe603816640 @messages={name:["can’t be blank"]}>
+    #   person.errors # => #<ActiveModel::Errors:0x007fe603816640 @messages={name:["can't be blank"]}>
     def errors
       @errors ||= Errors.new(self)
     end

@@ -125,7 +125,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
       # int 3 is 4 bytes in postgresql
       assert_match %r{"c_int_3"(?!.*limit)}, output
       assert_match %r{"c_int_4"(?!.*limit)}, output
-    elsif current_adapter?(:Mysql2Adapter)
+    elsif current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       assert_match %r{c_int_1.*limit: 1}, output
       assert_match %r{c_int_2.*limit: 2}, output
       assert_match %r{c_int_3.*limit: 3}, output
@@ -169,7 +169,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
 
   def test_schema_dumps_index_columns_in_right_order
     index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*company_index/).first.strip
-    if current_adapter?(:Mysql2Adapter)
+    if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       if ActiveRecord::Base.connection.supports_index_sort_order?
         assert_equal 't.index ["firm_id", "type", "rating"], name: "company_index", length: { type: 10 }, order: { rating: :desc }', index_definition
       else
@@ -191,6 +191,15 @@ class SchemaDumperTest < ActiveRecord::TestCase
     end
   end
 
+  def test_schema_dumps_nulls_not_distinct
+    index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*company_nulls_not_distinct/).first.strip
+    if supports_nulls_not_distinct?
+      assert_equal 't.index ["firm_id"], name: "company_nulls_not_distinct", nulls_not_distinct: true', index_definition
+    else
+      assert_equal 't.index ["firm_id"], name: "company_nulls_not_distinct"', index_definition
+    end
+  end
+
   def test_schema_dumps_index_sort_order
     index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*_name_and_rating/).first.strip
     if ActiveRecord::Base.connection.supports_index_sort_order?
@@ -202,7 +211,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
 
   def test_schema_dumps_index_length
     index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*_name_and_description/).first.strip
-    if current_adapter?(:Mysql2Adapter)
+    if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       assert_equal 't.index ["name", "description"], name: "index_companies_on_name_and_description", length: 10', index_definition
     else
       assert_equal 't.index ["name", "description"], name: "index_companies_on_name_and_description"', index_definition
@@ -212,7 +221,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
   if ActiveRecord::Base.connection.supports_check_constraints?
     def test_schema_dumps_check_constraints
       constraint_definition = dump_table_schema("products").split(/\n/).grep(/t.check_constraint.*products_price_check/).first.strip
-      if current_adapter?(:Mysql2Adapter)
+      if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
         assert_equal 't.check_constraint "`price` > `discounted_price`", name: "products_price_check"', constraint_definition
       else
         assert_equal 't.check_constraint "price > discounted_price", name: "products_price_check"', constraint_definition
@@ -232,19 +241,19 @@ class SchemaDumperTest < ActiveRecord::TestCase
     end
   end
 
-  if ActiveRecord::Base.connection.supports_unique_keys?
-    def test_schema_dumps_unique_keys
-      output = dump_table_schema("test_unique_keys")
-      constraint_definitions = output.split(/\n/).grep(/t\.unique_key/)
+  if ActiveRecord::Base.connection.supports_unique_constraints?
+    def test_schema_dumps_unique_constraints
+      output = dump_table_schema("test_unique_constraints")
+      constraint_definitions = output.split(/\n/).grep(/t\.unique_constraint/)
 
       assert_equal 3, constraint_definitions.size
-      assert_match 't.unique_key ["position_1"], name: "test_unique_keys_position_deferrable_false"', output
-      assert_match 't.unique_key ["position_2"], deferrable: :immediate, name: "test_unique_keys_position_deferrable_immediate"', output
-      assert_match 't.unique_key ["position_3"], deferrable: :deferred, name: "test_unique_keys_position_deferrable_deferred"', output
+      assert_match 't.unique_constraint ["position_1"], name: "test_unique_constraints_position_deferrable_false"', output
+      assert_match 't.unique_constraint ["position_2"], deferrable: :immediate, name: "test_unique_constraints_position_deferrable_immediate"', output
+      assert_match 't.unique_constraint ["position_3"], deferrable: :deferred, name: "test_unique_constraints_position_deferrable_deferred"', output
     end
 
-    def test_schema_does_not_dumps_unique_key_indexes
-      output = dump_table_schema("test_unique_keys")
+    def test_schema_does_not_dump_unique_constraints_as_indexes
+      output = dump_table_schema("test_unique_constraints")
       unique_index_definitions = output.split(/\n/).grep(/t\.index.*unique: true/)
 
       assert_equal 0, unique_index_definitions.size
@@ -291,7 +300,7 @@ class SchemaDumperTest < ActiveRecord::TestCase
 
       if current_adapter?(:PostgreSQLAdapter)
         assert_match %r{CASE.+lower\(\(name\)::text\).+END\) DESC"\z}i, index_definition
-      elsif current_adapter?(:Mysql2Adapter)
+      elsif current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
         assert_match %r{CASE.+lower\(`name`\).+END\) DESC"\z}i, index_definition
       elsif current_adapter?(:SQLite3Adapter)
         assert_match %r{CASE.+lower\(name\).+END\) DESC"\z}i, index_definition
@@ -299,9 +308,18 @@ class SchemaDumperTest < ActiveRecord::TestCase
         assert false
       end
     end
+
+    if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
+      def test_schema_dump_expression_indices_escaping
+        index_definition = dump_table_schema("companies").split(/\n/).grep(/t\.index.*full_name_index/).first.strip
+        index_definition.sub!(/, name: "full_name_index"\z/, "")
+
+        assert_match %r{concat_ws\(`firm_name`,`name`,_utf8mb4' '\)\)"\z}i, index_definition
+      end
+    end
   end
 
-  if current_adapter?(:Mysql2Adapter)
+  if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
     def test_schema_dump_includes_length_for_mysql_binary_fields
       output = dump_table_schema "binary_fields"
       assert_match %r{t\.binary\s+"var_binary",\s+limit: 255$}, output

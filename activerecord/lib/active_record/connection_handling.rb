@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 module ActiveRecord
+  # = Active Record Connection Handling
   module ConnectionHandling
     RAILS_ENV   = -> { (Rails.env if defined?(Rails.env)) || ENV["RAILS_ENV"].presence || ENV["RACK_ENV"].presence }
     DEFAULT_ENV = -> { RAILS_ENV.call || "default_env" }
@@ -38,7 +39,7 @@ module ActiveRecord
     #   )
     #
     # In case {ActiveRecord::Base.configurations}[rdoc-ref:Core.configurations]
-    # is set (Rails automatically loads the contents of config/database.yml into it),
+    # is set (\Rails automatically loads the contents of config/database.yml into it),
     # a symbol can also be given as argument, representing a key in the
     # configuration hash:
     #
@@ -86,12 +87,11 @@ module ActiveRecord
 
       connections = []
 
-      database.each do |role, database_key|
-        db_config = resolve_config_for_connection(database_key)
-
-        self.connection_class = true
-        connections << connection_handler.establish_connection(db_config, owner_name: self, role: role)
+      if shards.empty?
+        shards[:default] = database
       end
+
+      self.default_shard = shards.keys.first
 
       shards.each do |shard, database_keys|
         database_keys.each do |role, database_key|
@@ -293,6 +293,14 @@ module ActiveRecord
     end
 
     def remove_connection(name = nil)
+      if name
+        ActiveRecord.deprecator.warn(<<-MSG.squish)
+          The name argument for `#remove_connection` is deprecated without replacement
+          and will be removed in Rails 7.2. `#remove_connection` should always be called
+          on the connection class directly, which makes the name argument obsolete.
+        MSG
+      end
+
       name ||= @connection_specification_name if defined?(@connection_specification_name)
       # if removing a connection that has a pool, we reset the
       # connection_specification_name so it will use the parent

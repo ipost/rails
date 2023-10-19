@@ -166,19 +166,6 @@ class HasAndBelongsToManyAssociationsTest < ActiveRecord::TestCase
     assert_equal 1, country.treaties.count
   end
 
-  def test_join_table_composite_primary_key_should_not_warn
-    country = Country.new(name: "India")
-    country.country_id = "c1"
-    country.save!
-
-    treaty = Treaty.new(name: "peace")
-    treaty.treaty_id = "t1"
-    warning = capture(:stderr) do
-      country.treaties << treaty
-    end
-    assert_no_match(/WARNING: Active Record does not support composite primary key\./, warning)
-  end
-
   def test_has_and_belongs_to_many
     david = Developer.find(1)
 
@@ -853,13 +840,13 @@ class HasAndBelongsToManyAssociationsTest < ActiveRecord::TestCase
 
   def test_attributes_are_being_set_when_initialized_from_habtm_association_with_where_clause
     new_developer = projects(:action_controller).developers.where(name: "Marcelo").build
-    assert_equal new_developer.name, "Marcelo"
+    assert_equal "Marcelo", new_developer.name
   end
 
   def test_attributes_are_being_set_when_initialized_from_habtm_association_with_multiple_where_clauses
     new_developer = projects(:action_controller).developers.where(name: "Marcelo").where(salary: 90_000).build
-    assert_equal new_developer.name, "Marcelo"
-    assert_equal new_developer.salary, 90_000
+    assert_equal "Marcelo", new_developer.name
+    assert_equal 90_000, new_developer.salary
   end
 
   def test_include_method_in_has_and_belongs_to_many_association_should_return_true_for_instance_added_with_build

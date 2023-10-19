@@ -143,7 +143,7 @@ module ActiveRecord
           end
 
           Process.waitpid(pid)
-          assert $?.success?
+          assert_predicate $?, :success?
         ensure
           pool.discard!
         end
@@ -180,6 +180,7 @@ module ActiveRecord
 
           child = Thread.new do
             conn = pool.checkout
+            conn.query("SELECT 1") # ensure connected
             event.set
             Thread.stop
           end

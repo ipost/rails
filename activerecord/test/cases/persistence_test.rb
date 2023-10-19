@@ -22,10 +22,52 @@ require "models/ship"
 require "models/admin"
 require "models/admin/user"
 require "models/cpk"
+require "models/chat_message"
+require "models/default"
 
 class PersistenceTest < ActiveRecord::TestCase
   fixtures :topics, :companies, :developers, :accounts, :minimalistics, :authors, :author_addresses,
     :posts, :minivans, :clothing_items, :cpk_books
+
+  def test_populates_non_primary_key_autoincremented_column
+    topic = TitlePrimaryKeyTopic.create!(title: "title pk topic")
+
+    assert_not_nil topic.attributes["id"]
+  end
+
+  def test_populates_non_primary_key_autoincremented_column_for_a_cpk_model
+    order = Cpk::Order.create(shop_id: 111_222)
+
+    _shop_id, order_id = order.id
+
+    assert_not_nil order_id
+  end
+
+  def test_fills_auto_populated_columns_on_creation
+    record_with_defaults = Default.create
+    assert_not_nil record_with_defaults.id
+    assert_equal "Ruby on Rails", record_with_defaults.ruby_on_rails
+
+    if current_adapter?(:PostgreSQLAdapter) && ActiveRecord::Base.connection.supports_virtual_columns?
+      assert_not_nil record_with_defaults.virtual_stored_number
+    end
+
+    assert_not_nil record_with_defaults.random_number
+    assert_not_nil record_with_defaults.modified_date
+    assert_not_nil record_with_defaults.modified_date_function
+    assert_not_nil record_with_defaults.modified_time
+    assert_not_nil record_with_defaults.modified_time_without_precision
+    assert_not_nil record_with_defaults.modified_time_function
+
+    if current_adapter?(:PostgreSQLAdapter) && ActiveRecord::Base.connection.supports_identity_columns?
+      klass = Class.new(ActiveRecord::Base) do
+        self.table_name = "postgresql_identity_table"
+      end
+
+      record = klass.create!
+      assert_not_nil record.id
+    end
+  end if current_adapter?(:PostgreSQLAdapter) || current_adapter?(:SQLite3Adapter)
 
   def test_update_many
     topic_data = { 1 => { "content" => "1 updated" }, 2 => { "content" => "2 updated" } }
@@ -462,6 +504,23 @@ class PersistenceTest < ActiveRecord::TestCase
     assert_equal("New Topic", topic_reloaded.title)
   end
 
+  def test_create_model_with_uuid_pk_populates_id
+    message = ChatMessage.create(content: "New Message")
+    assert_not_nil message.id
+
+    message_reloaded = ChatMessage.find(message.id)
+    assert_equal "New Message", message_reloaded.content
+  end if current_adapter?(:PostgreSQLAdapter)
+
+
+  def test_create_model_with_custom_named_uuid_pk_populates_id
+    message = ChatMessageCustomPk.create(content: "New Message")
+    assert_not_nil message.message_id
+
+    message_reloaded = ChatMessageCustomPk.find(message.message_id)
+    assert_equal "New Message", message_reloaded.content
+  end if current_adapter?(:PostgreSQLAdapter)
+
   def test_build
     topic = Topic.build(title: "New Topic")
     assert_equal "New Topic", topic.title
@@ -745,7 +804,7 @@ class PersistenceTest < ActiveRecord::TestCase
   def test_delete
     topic = Topic.find(1)
     assert_equal topic, topic.delete, "topic.delete did not return self"
-    assert topic.frozen?, "topic not frozen after delete"
+    assert_predicate topic, :frozen?, "topic not frozen after delete"
     assert_raise(ActiveRecord::RecordNotFound) { Topic.find(topic.id) }
   end
 
@@ -764,15 +823,23 @@ class PersistenceTest < ActiveRecord::TestCase
   def test_destroy
     topic = Topic.find(1)
     assert_equal topic, topic.destroy, "topic.destroy did not return self"
-    assert topic.frozen?, "topic not frozen after destroy"
+    assert_predicate topic, :frozen?, "topic not frozen after destroy"
     assert_raise(ActiveRecord::RecordNotFound) { Topic.find(topic.id) }
   end
 
   def test_destroy!
     topic = Topic.find(1)
     assert_equal topic, topic.destroy!, "topic.destroy! did not return self"
-    assert topic.frozen?, "topic not frozen after destroy!"
+    assert_predicate topic, :frozen?, "topic not frozen after destroy!"
     assert_raise(ActiveRecord::RecordNotFound) { Topic.find(topic.id) }
+  end
+
+  def test_destroy_for_a_failed_to_destroy_cpk_record
+    book = cpk_books(:cpk_great_author_first_book)
+    book.fail_destroy = true
+    assert_raises(ActiveRecord::RecordNotDestroyed, match: /Failed to destroy Cpk::Book with \["author_id", "id"\]=/) do
+      book.destroy!
+    end
   end
 
   def test_find_raises_record_not_found_exception
@@ -1043,8 +1110,8 @@ class PersistenceTest < ActiveRecord::TestCase
     t.update_column(:title, "super_title")
     assert_equal "John", t.author_name
     assert_equal "super_title", t.title
-    assert t.changed?, "topic should have changed"
-    assert t.author_name_changed?, "author_name should have changed"
+    assert_predicate t, :changed?, "topic should have changed"
+    assert_predicate t, :author_name_changed?, "author_name should have changed"
 
     t.reload
     assert_equal author_name, t.author_name
@@ -1142,8 +1209,8 @@ class PersistenceTest < ActiveRecord::TestCase
     t.update_columns(title: "super_title")
     assert_equal "John", t.author_name
     assert_equal "super_title", t.title
-    assert t.changed?, "topic should have changed"
-    assert t.author_name_changed?, "author_name should have changed"
+    assert_predicate t, :changed?, "topic should have changed"
+    assert_predicate t, :author_name_changed?, "author_name should have changed"
 
     t.reload
     assert_equal author_name, t.author_name
@@ -1490,7 +1557,7 @@ class QueryConstraintsTest < ActiveRecord::TestCase
 
   def test_query_constraints_list_equals_to_composite_primary_key
     assert_equal(["shop_id", "id"], Cpk::Order.query_constraints_list)
-    assert_equal(["author_id", "number"], Cpk::Book.query_constraints_list)
+    assert_equal(["author_id", "id"], Cpk::Book.query_constraints_list)
   end
 
   def test_child_keeps_parents_query_constraints
@@ -1502,7 +1569,7 @@ class QueryConstraintsTest < ActiveRecord::TestCase
   end
 
   def test_child_keeps_parents_query_contraints_derived_from_composite_pk
-    assert_equal(["author_id", "number"], Cpk::BestSeller.query_constraints_list)
+    assert_equal(["author_id", "id"], Cpk::BestSeller.query_constraints_list)
   end
 
   def assert_uses_query_constraints_on_reload(object, columns)

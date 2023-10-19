@@ -57,6 +57,7 @@ module ActiveRecord
 
     def dump(stream)
       header(stream)
+      schemas(stream)
       extensions(stream)
       types(stream)
       tables(stream)
@@ -117,6 +118,10 @@ module ActiveRecord
 
       # (enum) types are only supported by PostgreSQL
       def types(stream)
+      end
+
+      # schemas are only supported by PostgreSQL
+      def schemas(stream)
       end
 
       def tables(stream)
@@ -188,7 +193,7 @@ module ActiveRecord
           indexes_in_create(table, tbl)
           check_constraints_in_create(table, tbl) if @connection.supports_check_constraints?
           exclusion_constraints_in_create(table, tbl) if @connection.supports_exclusion_constraints?
-          unique_keys_in_create(table, tbl) if @connection.supports_unique_keys?
+          unique_constraints_in_create(table, tbl) if @connection.supports_unique_constraints?
 
           tbl.puts "  end"
           tbl.puts
@@ -224,10 +229,10 @@ module ActiveRecord
             indexes = indexes.reject { |index| exclusion_constraint_names.include?(index.name) }
           end
 
-          if @connection.supports_unique_keys? && (unique_keys = @connection.unique_keys(table)).any?
-            unique_key_names = unique_keys.collect(&:name)
+          if @connection.supports_unique_constraints? && (unique_constraints = @connection.unique_constraints(table)).any?
+            unique_constraint_names = unique_constraints.collect(&:name)
 
-            indexes = indexes.reject { |index| unique_key_names.include?(index.name) }
+            indexes = indexes.reject { |index| unique_constraint_names.include?(index.name) }
           end
 
           index_statements = indexes.map do |index|
@@ -249,6 +254,7 @@ module ActiveRecord
         index_parts << "where: #{index.where.inspect}" if index.where
         index_parts << "using: #{index.using.inspect}" if !@connection.default_index_type?(index)
         index_parts << "include: #{index.include.inspect}" if index.include
+        index_parts << "nulls_not_distinct: #{index.nulls_not_distinct.inspect}" if index.nulls_not_distinct
         index_parts << "type: #{index.type.inspect}" if index.type
         index_parts << "comment: #{index.comment.inspect}" if index.comment
         index_parts
@@ -282,7 +288,7 @@ module ActiveRecord
               remove_prefix_and_suffix(foreign_key.to_table).inspect,
             ]
 
-            if foreign_key.column != @connection.foreign_key_column_for(foreign_key.to_table)
+            if foreign_key.column != @connection.foreign_key_column_for(foreign_key.to_table, "id")
               parts << "column: #{foreign_key.column.inspect}"
             end
 

@@ -44,7 +44,7 @@ Repeat this process until you reach your target Rails version.
 To move between versions:
 
 1. Change the Rails version number in the `Gemfile` and run `bundle update`.
-2. Change the versions for Rails JavaScript packages in `package.json` and run `yarn install`, if running on Webpacker.
+2. Change the versions for Rails JavaScript packages in `package.json` and run `bin/rails javascript:install` if running jsbundling-rails
 3. Run the [Update task](#the-update-task).
 4. Run your tests.
 
@@ -63,7 +63,7 @@ $ bin/rails app:update
     conflict  config/application.rb
 Overwrite /myapp/config/application.rb? (enter "h" for help) [Ynaqdh]
        force  config/application.rb
-      create  config/initializers/new_framework_defaults_7_0.rb
+      create  config/initializers/new_framework_defaults_7_2.rb
 ...
 ```
 
@@ -75,188 +75,104 @@ The new Rails version might have different configuration defaults than the previ
 
 To allow you to upgrade to new defaults one by one, the update task has created a file `config/initializers/new_framework_defaults_X.Y.rb` (with the desired Rails version in the filename). You should enable the new configuration defaults by uncommenting them in the file; this can be done gradually over several deployments. Once your application is ready to run with new defaults, you can remove this file and flip the `config.load_defaults` value.
 
+Upgrading from Rails 7.1 to Rails 7.2
+-------------------------------------
+
+For more information on changes made to Rails 7.2 please see the [release notes](7_2_release_notes.html).
+
 Upgrading from Rails 7.0 to Rails 7.1
 -------------------------------------
 
 For more information on changes made to Rails 7.1 please see the [release notes](7_1_release_notes.html).
 
-### Autoloaded paths are no longer in load path
+### Autoloaded paths are no longer in $LOAD_PATH
 
-Starting from Rails 7.1, all paths managed by the autoloader will no longer be added to `$LOAD_PATH`.
-This means it won't be possible to load them with a manual `require` call, the class or module can be referenced instead.
+Starting from Rails 7.1, the directories managed by the autoloaders are no
+longer added to `$LOAD_PATH`. This means it won't be possible to load their
+files with a manual `require` call, which shouldn't be done anyway.
 
-Reducing the size of `$LOAD_PATH` speed-up `require` calls for apps not using `bootsnap`, and reduce the
-size of the `bootsnap` cache for the others.
+Reducing the size of `$LOAD_PATH` speeds up `require` calls for apps not using
+`bootsnap`, and reduces the size of the `bootsnap` cache for the others.
+
+If you'd like to have these paths still in `$LOAD_PATH`, you can opt-in:
+
+```ruby
+config.add_autoload_paths_to_load_path = true
+```
+
+but we discourage doing so, classes and modules in the autoload paths are meant
+to be autoloaded. That is, just reference them.
+
+The `lib` directory is not affected by this flag, it is added to `$LOAD_PATH`
+always.
+
+### config.autoload_lib and config.autoload_lib_once
+
+If your application does not have `lib` in the autoload or autoload once paths,
+please skip this section. You can find that out by inspecting the output of
+
+```bash
+# Print autoload paths.
+$ bin/rails runner 'pp Rails.autoloaders.main.dirs'
+
+# Print autoload once paths.
+$ bin/rails runner 'pp Rails.autoloaders.once.dirs'
+```
+
+If your application already has `lib` in the autoload paths, normally there is
+configuration in `config/application.rb` that looks something like
+
+```ruby
+# Autoload lib, but do not eager load it (maybe overlooked).
+config.autoload_paths << config.root.join("lib")
+```
+
+or
+
+```ruby
+# Autoload and also eager load lib.
+config.autoload_paths << config.root.join("lib")
+config.eager_load_paths << config.root.join("lib")
+```
+
+or
+
+```ruby
+# Same, because all eager load paths become autoload paths too.
+config.eager_load_paths << config.root.join("lib")
+```
+
+That still works, but it is recommended to replace those lines with the more
+concise
+
+```ruby
+config.autoload_lib(ignore: %w(assets tasks))
+```
+
+Please, add to the `ignore` list any other `lib` subdirectories that do not
+contain `.rb` files, or that should not be reloaded or eager loaded. For
+example, if your application has `lib/templates`, `lib/generators`, or
+`lib/middleware`, you'd add their name relative to `lib`:
+
+```ruby
+config.autoload_lib(ignore: %w(assets tasks templates generators middleware))
+```
+
+With that one-liner, the (non-ignored) code in `lib` will be also eager loaded
+if `config.eager_load` is `true` (the default in `production` mode). This is
+normally what you want, but if `lib` was not added to the eager load paths
+before and you still want it that way, please opt-out:
+
+```ruby
+Rails.autoloaders.main.do_not_eager_load(config.root.join("lib"))
+```
+
+The method `config.autoload_lib_once` is the analogous one if the application
+had `lib` in `config.autoload_once_paths`.
 
 ### `ActiveStorage::BaseController` no longer includes the streaming concern
 
 Application controllers that inherit from `ActiveStorage::BaseController` and use streaming to implement custom file serving logic must now explicitly include the `ActiveStorage::Streaming` module.
-
-### New `ActiveSupport::MessageEncryptor` default serializer
-
-As of Rails 7.1, the default serializer in use by the `MessageEncryptor` is `JSON`.
-This offers a more secure alternative to the current default serializer.
-
-The `MessageEncryptor` offers the ability to migrate the default serializer from `Marshal` to `JSON`.
-
-If you would like to ignore this change in existing applications, set the following: `config.active_support.default_message_encryptor_serializer = :marshal`.
-
-In order to roll out the new default when upgrading from `7.0` to `7.1`, there are three configuration variables to keep in mind.
-
-```ruby
-config.active_support.default_message_encryptor_serializer
-config.active_support.fallback_to_marshal_deserialization
-config.active_support.use_marshal_serialization
-```
-
-`default_message_encryptor_serializer` defaults to `:json` as of `7.1` but it offers both a `:hybrid` and `:marshal` option.
-
-In order to migrate an older deployment to `:json`, first ensure that the `default_message_encryptor_serializer` is set to `:marshal`.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_encryptor_serializer = :marshal
-```
-
-Once this is deployed on all Rails processes, set `default_message_encryptor_serializer` to `:hybrid` to begin using the
-`ActiveSupport::JsonWithMarshalFallback` class as the serializer. The defaults for this class are to use `Marshal`
-as the serializer and to allow the deserialisation of both `Marshal` and `JSON` serialized payloads.
-
-```ruby
-config.load_defaults 7.0
-config.active_support.default_message_encryptor_serializer = :hybrid
-```
-
-Once this is deployed on all Rails processes, set the following configuration options in order to stop the
-`ActiveSupport::JsonWithMarshalFallback` class from using `Marshal` to serialize new payloads.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_encryptor_serializer = :hybrid
-config.active_support.use_marshal_serialization = false
-```
-
-Allow this configuration to run on all processes for a considerable amount of time.
-`ActiveSupport::JsonWithMarshalFallback` logs the following each time the `Marshal` fallback
-is used:
-
-```
-JsonWithMarshalFallback: Marshal load fallback occurred.
-```
-
-Once those message stop appearing in your logs and you're confident that all `MessageEncryptor`
-payloads in transit are `JSON` serialized, the following configuration options will disable the
-Marshal fallback in `ActiveSupport::JsonWithMarshalFallback`.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_encryptor_serializer = :hybrid
-config.active_support.use_marshal_serialization = false
-config.active_support.fallback_to_marshal_deserialization = false
-```
-
-If all goes well, you should now be safe to migrate the Message Encryptor from
-`ActiveSupport::JsonWithMarshalFallback` to `ActiveSupport::JSON`.
-To do so, simply swap the `:hybrid` serializer for the `:json` serializer.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_encryptor_serializer = :json
-```
-
-Alternatively, you could load defaults for 7.1
-
-```ruby
-# config/application.rb
-config.load_defaults 7.1
-```
-
-### New `ActiveSupport::MessageVerifier` default serializer
-
-As of Rails 7.1, the default serializer in use by the `MessageVerifier` is `JSON`.
-This offers a more secure alternative to the current default serializer.
-
-The `MessageVerifier` offers the ability to migrate the default serializer from `Marshal` to `JSON`.
-
-If you would like to ignore this change in existing applications, set the following: `config.active_support.default_message_verifier_serializer = :marshal`.
-
-In order to roll out the new default when upgrading from `7.0` to `7.1`, there are three configuration variables to keep in mind.
-
-```ruby
-config.active_support.default_verifier_serializer
-config.active_support.fallback_to_marshal_deserialization
-config.active_support.use_marshal_serialization
-```
-
-`default_message_verifier_serializer` defaults to `:json` as of `7.1` but it offers both a `:hybrid` and `:marshal` option.
-
-In order to migrate an older deployment to `:json`, first ensure that the `default_message_verifier_serializer` is set to `:marshal`.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_verifier_serializer = :marshal
-```
-
-Once this is deployed on all Rails processes, set `default_message_verifier_serializer` to `:hybrid` to begin using the
-`ActiveSupport::JsonWithMarshalFallback` class as the serializer. The defaults for this class are to use `Marshal`
-as the serializer and to allow the deserialisation of both `Marshal` and `JSON` serialized payloads.
-
-```ruby
-config.load_defaults 7.0
-config.active_support.default_message_verifier_serializer = :hybrid
-```
-
-Once this is deployed on all Rails processes, set the following configuration options in order to stop the
-`ActiveSupport::JsonWithMarshalFallback` class from using `Marshal` to serialize new payloads.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_verifier_serializer = :hybrid
-config.active_support.use_marshal_serialization = false
-```
-
-Allow this configuration to run on all processes for a considerable amount of time.
-`ActiveSupport::JsonWithMarshalFallback` logs the following each time the `Marshal` fallback
-is used:
-
-```
-JsonWithMarshalFallback: Marshal load fallback occurred.
-```
-
-Once those message stop appearing in your logs and you're confident that all `MessageVerifier`
-payloads in transit are `JSON` serialized, the following configuration options will disable the
-Marshal fallback in `ActiveSupport::JsonWithMarshalFallback`.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_verifier_serializer = :hybrid
-config.active_support.use_marshal_serialization = false
-config.active_support.fallback_to_marshal_deserialization = false
-```
-
-If all goes well, you should now be safe to migrate the Message Verifier from
-`ActiveSupport::JsonWithMarshalFallback` to `ActiveSupport::JSON`.
-To do so, simply swap the `:hybrid` serializer for the `:json` serializer.
-
-```ruby
-# config/application.rb
-config.load_defaults 7.0
-config.active_support.default_message_verifier_serializer = :json
-```
-
-Alternatively, you could load defaults for 7.1
-
-```ruby
-# config/application.rb
-config.load_defaults 7.1
-```
 
 ### `MemCacheStore` and `RedisCacheStore` now use connection pooling by default
 
@@ -267,7 +183,7 @@ If you don't want to use connection pooling, set `:pool` option to `false` when
 configuring your cache store:
 
 ```ruby
-config.cache_store = :mem_cache_store, "cache.example.com", pool: false
+config.cache_store = :mem_cache_store, "cache.example.com", { pool: false }
 ```
 
 See the [caching with Rails](https://guides.rubyonrails.org/v7.1/caching_with_rails.html#connection-pool-options) guide for more information.
@@ -327,6 +243,114 @@ I18n.t("missing.key") # didn't raise in 7.0, doesn't raise in 7.1
 
 Alternatively, you can customise the `I18n.exception_handler`.
 See the [i18n guide](https://guides.rubyonrails.org/v7.1/i18n.html#using-different-exception-handlers) for more information.
+
+`AbstractController::Translation.raise_on_missing_translations` has been removed. This was a private API, if you were
+relying on it you should migrate to `config.i18n.raise_on_missing_translations` or to a custom exception handler.
+
+### `bin/rails test` now runs `test:prepare` task
+
+When running tests via `bin/rails test`, the `rake test:prepare` task will run before tests run. If you've enhanced
+the `test:prepare` task, your enhancements will run before your tests. `tailwindcss-rails`, `jsbundling-rails`, and `cssbundling-rails`
+enhance this task, as do other third party gems.
+
+See the [Testing Rails Applications](https://guides.rubyonrails.org/testing.html#running-tests-in-continuous-integration-ci) guide for more information.
+
+If you run a single file's tests (`bin/rails test test/models/user_test.rb`), `test:prepare` will not run before it.
+
+### `ActionView::TestCase#rendered` no longer returns a `String`
+
+Starting from Rails 7.1, `ActionView::TestCase#rendered` returns an object that
+responds to various format methods (for example, `rendered.html` and
+`rendered.json`). To preserve backward compatibility, the object returned from
+`rendered` will delegate missing methods to the `String` rendered during the
+test. For example, the following [assert_match][] assertion will pass:
+
+```ruby
+assert_match(/some content/i, rendered)
+```
+
+However, if your tests rely on `ActionView::TestCase#rendered` returning an
+instance of `String`, they will fail. To restore the original behavior, you can
+override the `#rendered` method to read from the `@rendered` instance variable:
+
+```ruby
+# config/initializers/action_view.rb
+
+ActiveSupport.on_load :action_view_test_case do
+  attr_reader :rendered
+end
+```
+
+### `Rails.logger` now returns an `ActiveSupport::BroadcastLogger` instance
+
+The `ActiveSupport::BroadcastLogger` class is a new logger that allows to broadcast logs to different sinks (STDOUT, a log file...) in an easy way.
+
+The API to broadcast logs (using the `ActiveSupport::Logger.broadcast` method) was removed and was previously private.
+If your application or library was relying on this API, you need to make the following changes:
+
+```ruby
+logger = Logger.new("some_file.log")
+
+# Before
+
+Rails.logger.extend(ActiveSupport::Logger.broadcast(logger))
+
+# After
+
+Rails.logger.broadcast_to(logger)
+```
+
+If your application had configured a custom logger, `Rails.logger` will wrap and proxy all methods to it. No changes on your side are required to make it work.
+
+If you need to access your custom logger instance, you can do so using the `broadcasts` method:
+
+```ruby
+# config/application.rb
+config.logger = MyLogger.new
+
+# Anywhere in your application
+puts Rails.logger.class #=> BroadcastLogger
+puts Rails.logger.broadcasts #=> [MyLogger]
+```
+
+[assert_match]: https://docs.seattlerb.org/minitest/Minitest/Assertions.html#method-i-assert_match
+
+
+### Active Record Encryption algorithm changes
+
+Active Record Encryption now uses SHA-256 as its hash digest algorithm. If you have data encrypted with previous Rails
+versions, there are two scenarios to consider:
+
+1. If you have `config.active_support.key_generator_hash_digest_class` configured as SHA-1 (the default
+   before Rails 7.0), you need to configure SHA-1 for Active Record Encryption too:
+
+    ```ruby
+    config.active_record.encryption.hash_digest_class = OpenSSL::Digest::SHA1
+    ```
+
+2. If you have `config.active_support.key_generator_hash_digest_class` configured as SHA-256 (the new default
+   in 7.0), then you need to configure SHA-256 for Active Record Encryption:
+
+    ```ruby
+    config.active_record.encryption.hash_digest_class = OpenSSL::Digest::SHA256
+    ```
+
+See the [Configuring Rails Applications](configuring.html#config-active-record-encryption-hash-digest-class)
+guide for more information on `config.active_record.encryption.hash_digest_class`.
+
+In addition, a new configuration [`config.active_record.encryption.support_sha1_for_non_deterministic_encryption`](configuring.html#config-active-record-encryption-support-sha1-for-non-deterministic-encryption)
+was introduced to resolve [a bug](https://github.com/rails/rails/issues/42922) that caused some attributes to be
+encrypted using SHA-1 even when SHA-256 was configured via the aforementioned `hash_digest_class` configuration.
+
+By default, `config.active_record.encryption.support_sha1_for_non_deterministic_encryption` is disabled in
+Rails 7.1. If you have data encrypted in a version of Rails < 7.1 that you believe may be affected
+by the aforementioned bug, this configuration should be enabled:
+
+```ruby
+config.active_record.encryption.support_sha1_for_non_deterministic_encryption = true
+```
+
+If you are working with encrypted data, please carefully review the above.
 
 Upgrading from Rails 6.1 to Rails 7.0
 -------------------------------------
@@ -676,6 +700,8 @@ The schema file will look like this:
 # It's strongly recommended that you check this file into your version control system.
 
 ActiveRecord::Schema[6.1].define(version: 2022_01_28_123512) do
+  # ...
+end
 ```
 
 NOTE: The first time you dump the schema with Rails 7.0, you will see many changes to that file, including
@@ -1207,10 +1233,10 @@ class User < ApplicationRecord
   has_many_attached :highlights
 end
 
-user.highlights.attach(filename: "funky.jpg", ...)
+user.highlights.attach(filename: "funky.jpg")
 user.highlights.count # => 1
 
-blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg", ...)
+blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg")
 user.update!(highlights: [ blob ])
 
 user.highlights.count # => 2
@@ -1221,10 +1247,10 @@ user.highlights.second.filename # => "town.jpg"
 With the configuration defaults for Rails 6.0, assigning to a collection of attachments replaces existing files instead of appending to them. This matches Active Record behavior when assigning to a collection association:
 
 ```ruby
-user.highlights.attach(filename: "funky.jpg", ...)
+user.highlights.attach(filename: "funky.jpg")
 user.highlights.count # => 1
 
-blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg", ...)
+blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg")
 user.update!(highlights: [ blob ])
 
 user.highlights.count # => 1
@@ -1234,7 +1260,7 @@ user.highlights.first.filename # => "town.jpg"
 `#attach` can be used to add new attachments without removing the existing ones:
 
 ```ruby
-blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg", ...)
+blob = ActiveStorage::Blob.create_after_upload!(filename: "town.jpg")
 user.highlights.attach(blob)
 
 user.highlights.count # => 2
@@ -1863,15 +1889,15 @@ invocation of the instance methods are deferred until either `deliver_now` or
 
 ```ruby
 class Notifier < ActionMailer::Base
-  def notify(user, ...)
+  def notify(user)
     puts "Called"
-    mail(to: user.email, ...)
+    mail(to: user.email)
   end
 end
 ```
 
 ```ruby
-mail = Notifier.notify(user, ...) # Notifier#notify is not yet called at this point
+mail = Notifier.notify(user) # Notifier#notify is not yet called at this point
 mail = mail.deliver_now           # Prints "Called"
 ```
 
@@ -2458,10 +2484,10 @@ Rails 4.0 no longer supports loading plugins from `vendor/plugins`. You must rep
 * Rails 4.0 requires that scopes use a callable object such as a Proc or lambda:
 
     ```ruby
-      scope :active, where(active: true)
+    scope :active, where(active: true)
 
-      # becomes
-      scope :active, -> { where active: true }
+    # becomes
+    scope :active, -> { where active: true }
     ```
 
 * Rails 4.0 has deprecated `ActiveRecord::Fixtures` in favor of `ActiveRecord::FixtureSet`.
@@ -2489,11 +2515,11 @@ Rails 4.0 no longer supports loading plugins from `vendor/plugins`. You must rep
 * Rails 4.0 has changed to default join table for `has_and_belongs_to_many` relations to strip the common prefix off the second table name. Any existing `has_and_belongs_to_many` relationship between models with a common prefix must be specified with the `join_table` option. For example:
 
     ```ruby
-    CatalogCategory < ActiveRecord::Base
+    class CatalogCategory < ActiveRecord::Base
       has_and_belongs_to_many :catalog_products, join_table: 'catalog_categories_catalog_products'
     end
 
-    CatalogProduct < ActiveRecord::Base
+    class CatalogProduct < ActiveRecord::Base
       has_and_belongs_to_many :catalog_categories, join_table: 'catalog_categories_catalog_products'
     end
     ```
@@ -2522,9 +2548,9 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 * Rails 4.0 introduces `ActiveSupport::KeyGenerator` and uses this as a base from which to generate and verify signed cookies (among other things). Existing signed cookies generated with Rails 3.x will be transparently upgraded if you leave your existing `secret_token` in place and add the new `secret_key_base`.
 
     ```ruby
-      # config/initializers/secret_token.rb
-      Myapp::Application.config.secret_token = 'existing secret token'
-      Myapp::Application.config.secret_key_base = 'new secret key base'
+    # config/initializers/secret_token.rb
+    Myapp::Application.config.secret_token = 'existing secret token'
+    Myapp::Application.config.secret_key_base = 'new secret key base'
     ```
 
     Please note that you should wait to set `secret_key_base` until you have 100% of your userbase on Rails 4.x and are reasonably sure you will not need to rollback to Rails 3.x. This is because cookies signed based on the new `secret_key_base` in Rails 4.x are not backwards compatible with Rails 3.x. You are free to leave your existing `secret_token` in place, not set the new `secret_key_base`, and ignore the deprecation warnings until you are reasonably sure that your upgrade is otherwise complete.
@@ -2588,14 +2614,14 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 * Rails 4.0 requires that routes using `match` must specify the request method. For example:
 
     ```ruby
-      # Rails 3.x
-      match '/' => 'root#index'
+    # Rails 3.x
+    match '/' => 'root#index'
 
-      # becomes
-      match '/' => 'root#index', via: :get
+    # becomes
+    match '/' => 'root#index', via: :get
 
-      # or
-      get '/' => 'root#index'
+    # or
+    get '/' => 'root#index'
     ```
 
 * Rails 4.0 has removed `ActionDispatch::BestStandardsSupport` middleware, `<!DOCTYPE html>` already triggers standards mode per https://msdn.microsoft.com/en-us/library/jj676915(v=vs.85).aspx and ChromeFrame header has been moved to `config.action_dispatch.default_headers`.
@@ -2612,10 +2638,10 @@ Rails 4.0 extracted Active Resource to its own gem. If you still need the featur
 * Rails 4.0 allows configuration of HTTP headers by setting `config.action_dispatch.default_headers`. The defaults are as follows:
 
     ```ruby
-      config.action_dispatch.default_headers = {
-        'X-Frame-Options' => 'SAMEORIGIN',
-        'X-XSS-Protection' => '1; mode=block'
-      }
+    config.action_dispatch.default_headers = {
+      'X-Frame-Options' => 'SAMEORIGIN',
+      'X-XSS-Protection' => '1; mode=block'
+    }
     ```
 
     Please note that if your application is dependent on loading certain pages in a `<frame>` or `<iframe>`, then you may need to explicitly set `X-Frame-Options` to `ALLOW-FROM ...` or `ALLOWALL`.

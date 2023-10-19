@@ -83,6 +83,18 @@ module ActiveRecord
         assert_equal 0, active_connections(pool).size
       end
 
+      def test_new_connection_no_query
+        skip("Can't test with in-memory dbs") if in_memory_db?
+        assert_equal 0, pool.connections.size
+        pool.with_connection { |_conn| } # warm the schema cache
+        pool.flush(0)
+        assert_equal 0, pool.connections.size
+
+        assert_no_queries do
+          pool.with_connection { |_conn| }
+        end
+      end
+
       def test_active_connection_in_use
         assert_not_predicate pool, :active_connection?
         main_thread = pool.connection
@@ -519,10 +531,12 @@ module ActiveRecord
 
         @connection_test_model_class.establish_connection :arunit
 
-        assert_equal [:config, :connection_name, :shard], payloads[0].keys.sort
+        assert_equal [:config, :connection_name, :role, :shard], payloads[0].keys.sort
         assert_equal @connection_test_model_class.name, payloads[0][:connection_name]
         assert_equal ActiveRecord::Base.default_shard, payloads[0][:shard]
+        assert_equal :writing, payloads[0][:role]
       ensure
+        @connection_test_model_class.remove_connection
         ActiveSupport::Notifications.unsubscribe(subscription) if subscription
       end
 
@@ -531,24 +545,29 @@ module ActiveRecord
         subscription = ActiveSupport::Notifications.subscribe("!connection.active_record") do |name, started, finished, unique_id, payload|
           payloads << payload
         end
-        @connection_test_model_class.connects_to shards: { shard_two: { writing: :arunit } }
+        @connection_test_model_class.connects_to shards: { default: { writing: :arunit } }
 
-        assert_equal [:config, :connection_name, :shard], payloads[0].keys.sort
+        assert_equal [:config, :connection_name, :role, :shard], payloads[0].keys.sort
         assert_equal @connection_test_model_class.name, payloads[0][:connection_name]
-        assert_equal :shard_two, payloads[0][:shard]
+        assert_equal :default, payloads[0][:shard]
+        assert_equal :writing, payloads[0][:role]
       ensure
+        @connection_test_model_class.remove_connection
         ActiveSupport::Notifications.unsubscribe(subscription) if subscription
       end
 
       def test_pool_sets_connection_schema_cache
         connection = pool.checkout
-        schema_cache = SchemaCache.new connection
-        schema_cache.add(:posts)
-        pool.schema_cache = schema_cache
+        connection.schema_cache.add(:posts)
 
         pool.with_connection do |conn|
-          assert_equal pool.schema_cache.size, conn.schema_cache.size
-          assert_same pool.schema_cache.columns(:posts), conn.schema_cache.columns(:posts)
+          # We've retrieved a second, distinct, connection from the pool
+          assert_not_same connection, conn
+
+          # But the new connection can already see the schema cache
+          # entry we added above
+          assert_equal connection.schema_cache.size, conn.schema_cache.size
+          assert_same connection.schema_cache.columns(:posts), conn.schema_cache.columns(:posts)
         end
 
         pool.checkin connection

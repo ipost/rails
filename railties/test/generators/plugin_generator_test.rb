@@ -183,12 +183,12 @@ class PluginGeneratorTest < Rails::Generators::TestCase
   end
 
   def test_ensure_that_plugin_options_are_not_passed_to_app_generator
-    FileUtils.cd(Rails.root)
+    FileUtils.cd(fixtures_root)
     assert_no_match(/It works from file!.*It works_from_file/, run_generator([destination_root, "-m", "lib/template.rb"]))
   end
 
   def test_ensure_that_test_dummy_can_be_generated_from_a_template
-    FileUtils.cd(Rails.root)
+    FileUtils.cd(fixtures_root)
     run_generator([destination_root, "-m", "lib/create_test_dummy_template.rb", "--skip-test"])
     assert_directory "spec/dummy"
     assert_no_directory "test"
@@ -277,11 +277,6 @@ class PluginGeneratorTest < Rails::Generators::TestCase
     assert_no_directory "app/jobs"
   end
 
-  def test_template_from_dir_pwd
-    FileUtils.cd(Rails.root)
-    assert_match(/It works from file!/, run_generator([destination_root, "-m", "lib/template.rb"]))
-  end
-
   def test_ensure_that_migration_tasks_work_with_mountable_option
     run_generator [destination_root, "--mountable"]
     prepare_plugin(destination_root)
@@ -289,7 +284,7 @@ class PluginGeneratorTest < Rails::Generators::TestCase
     in_plugin_context(destination_root) do
       quietly { system "bundle install" }
       output = `bin/rails db:migrate 2>&1`
-      assert $?.success?, "Command failed: #{output}"
+      assert_predicate $?, :success?, "Command failed: #{output}"
     end
   end
 
@@ -565,7 +560,7 @@ class PluginGeneratorTest < Rails::Generators::TestCase
 
     in_plugin_context(destination_root) do
       output = `bin/test 2>&1`
-      assert $?.success?, "Command failed: #{output}"
+      assert_predicate $?, :success?, "Command failed: #{output}"
     end
   end
 

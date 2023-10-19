@@ -193,6 +193,8 @@ class Module
     method_def = []
     method_names = []
 
+    method_def << "self.private" if private
+
     methods.each do |method|
       method_name = prefix ? "#{method_prefix}#{method}" : method
       method_names << method_name.to_sym
@@ -221,7 +223,7 @@ class Module
               "..."
             else
               defn = parameters.filter_map { |type, arg| arg if type == :req }
-              defn << "&block" if parameters.last&.first == :block
+              defn << "&block"
               defn.join(", ")
             end
           else
@@ -264,7 +266,6 @@ class Module
       end
     end
     module_eval(method_def.join(";"), file, line)
-    private(*method_names) if private
     method_names
   end
 

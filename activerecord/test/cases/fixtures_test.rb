@@ -17,6 +17,7 @@ require "models/company"
 require "models/computer"
 require "models/course"
 require "models/developer"
+require "models/dog_lover"
 require "models/dog"
 require "models/doubloon"
 require "models/essay"
@@ -82,7 +83,7 @@ class FixturesTest < ActiveRecord::TestCase
     end
   end
 
-  if current_adapter?(:Mysql2Adapter, :PostgreSQLAdapter)
+  if current_adapter?(:Mysql2Adapter, :TrilogyAdapter, :PostgreSQLAdapter)
     def test_bulk_insert
       subscriber = InsertQuerySubscriber.new
       subscription = ActiveSupport::Notifications.subscribe("sql.active_record", subscriber)
@@ -145,12 +146,20 @@ class FixturesTest < ActiveRecord::TestCase
     end
   end
 
-  if current_adapter?(:Mysql2Adapter)
+  if current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
     def test_bulk_insert_with_multi_statements_enabled
+      orig_connection_class = ActiveRecord::Base.connection.class
       run_without_connection do |orig_connection|
-        ActiveRecord::Base.establish_connection(
-          orig_connection.merge(flags: %w[MULTI_STATEMENTS])
-        )
+        case orig_connection_class::ADAPTER_NAME
+        when "Trilogy"
+          ActiveRecord::Base.establish_connection(
+            orig_connection.merge(multi_statement: true)
+          )
+        else
+          ActiveRecord::Base.establish_connection(
+            orig_connection.merge(flags: %w[MULTI_STATEMENTS])
+          )
+        end
 
         fixtures = {
           "traffic_lights" => [
@@ -161,7 +170,12 @@ class FixturesTest < ActiveRecord::TestCase
         assert_nothing_raised do
           conn = ActiveRecord::Base.connection
           conn.execute("SELECT 1; SELECT 2;")
-          conn.raw_connection.abandon_results!
+          case orig_connection_class::ADAPTER_NAME
+          when "Trilogy"
+            conn.raw_connection.next_result while conn.raw_connection.more_results_exist?
+          else
+            conn.raw_connection.abandon_results!
+          end
         end
 
         assert_difference "TrafficLight.count" do
@@ -176,16 +190,29 @@ class FixturesTest < ActiveRecord::TestCase
         assert_nothing_raised do
           conn = ActiveRecord::Base.connection
           conn.execute("SELECT 1; SELECT 2;")
-          conn.raw_connection.abandon_results!
+          case orig_connection_class::ADAPTER_NAME
+          when "Trilogy"
+            conn.raw_connection.next_result while conn.raw_connection.more_results_exist?
+          else
+            conn.raw_connection.abandon_results!
+          end
         end
       end
     end
 
     def test_bulk_insert_with_multi_statements_disabled
+      orig_connection_class = ActiveRecord::Base.connection.class
       run_without_connection do |orig_connection|
-        ActiveRecord::Base.establish_connection(
-          orig_connection.merge(flags: [])
-        )
+        case orig_connection_class::ADAPTER_NAME
+        when "Trilogy"
+          ActiveRecord::Base.establish_connection(
+            orig_connection.merge(multi_statement: false)
+          )
+        else
+          ActiveRecord::Base.establish_connection(
+            orig_connection.merge(flags: [])
+          )
+        end
 
         fixtures = {
           "traffic_lights" => [
@@ -196,7 +223,12 @@ class FixturesTest < ActiveRecord::TestCase
         assert_raises(ActiveRecord::StatementInvalid) do
           conn = ActiveRecord::Base.connection
           conn.execute("SELECT 1; SELECT 2;")
-          conn.raw_connection.abandon_results!
+          case orig_connection_class::ADAPTER_NAME
+          when "Trilogy"
+            conn.raw_connection.next_result while conn.raw_connection.more_results_exist?
+          else
+            conn.raw_connection.abandon_results!
+          end
         end
 
         assert_difference "TrafficLight.count" do
@@ -207,7 +239,12 @@ class FixturesTest < ActiveRecord::TestCase
         assert_raises(ActiveRecord::StatementInvalid) do
           conn = ActiveRecord::Base.connection
           conn.execute("SELECT 1; SELECT 2;")
-          conn.raw_connection.abandon_results!
+          case orig_connection_class::ADAPTER_NAME
+          when "Trilogy"
+            conn.raw_connection.next_result while conn.raw_connection.more_results_exist?
+          else
+            conn.raw_connection.abandon_results!
+          end
         end
       end
     end
@@ -527,12 +564,12 @@ class FixturesTest < ActiveRecord::TestCase
   end
 
   def test_yml_file_in_subdirectory
-    assert_equal(categories(:sub_special_1).name, "A special category in a subdir file")
+    assert_equal("A special category in a subdir file", categories(:sub_special_1).name)
     assert_equal(categories(:sub_special_1).class, SpecialCategory)
   end
 
   def test_subsubdir_file_with_arbitrary_name
-    assert_equal(categories(:sub_special_3).name, "A special category in an arbitrarily named subsubdir file")
+    assert_equal("A special category in an arbitrarily named subsubdir file", categories(:sub_special_3).name)
     assert_equal(categories(:sub_special_3).class, SpecialCategory)
   end
 
@@ -562,7 +599,7 @@ class FixturesTest < ActiveRecord::TestCase
 
       result = test_case.new(:test_fixtures).run
 
-      assert result.passed?, "Expected #{result.name} to pass:\n#{result}"
+      assert_predicate result, :passed?, "Expected #{result.name} to pass:\n#{result}"
     end
   ensure
     ENV["DATABASE_URL"] = db_url_tmp
@@ -814,6 +851,8 @@ class FixturesWithForeignKeyViolationsTest < ActiveRecord::TestCase
     # those violations can cause false positives in these tests. since they aren't related to these tests we
     # delete the irrelevant records here (this test is transactional so it's fine).
     Parrot.all.each(&:destroy)
+
+    @path = "/fk_pointing_to_non_existent_object.yml"
   end
 
   def test_raises_fk_violations
@@ -821,13 +860,15 @@ class FixturesWithForeignKeyViolationsTest < ActiveRecord::TestCase
     first:
       fk_object_to_point_to: one
     FIXTURE
-    File.write(FIXTURES_ROOT + "/fk_pointing_to_non_existent_object.yml", fk_pointing_to_non_existent_object)
+    File.write(FIXTURES_ROOT + @path, fk_pointing_to_non_existent_object)
 
     with_verify_foreign_keys_for_fixtures do
       if current_adapter?(:SQLite3Adapter, :PostgreSQLAdapter)
-        assert_raise RuntimeError do
+        error = assert_raise RuntimeError do
           ActiveRecord::FixtureSet.create_fixtures(FIXTURES_ROOT, ["fk_pointing_to_non_existent_object"])
         end
+        assert_includes error.message, "Foreign key violations found in your fixture data. Ensure you aren't referring to labels that don't exist on associations."
+        assert_includes error.message, "fk_pointing_to_non_existent_objects"
       else
         assert_nothing_raised do
           ActiveRecord::FixtureSet.create_fixtures(FIXTURES_ROOT, ["fk_pointing_to_non_existent_object"])
@@ -836,7 +877,7 @@ class FixturesWithForeignKeyViolationsTest < ActiveRecord::TestCase
     end
 
   ensure
-    File.delete(FIXTURES_ROOT + "/fk_pointing_to_non_existent_object.yml")
+    File.delete(FIXTURES_ROOT + @path)
     ActiveRecord::FixtureSet.reset_cache
   end
 
@@ -845,7 +886,7 @@ class FixturesWithForeignKeyViolationsTest < ActiveRecord::TestCase
     first:
       fk_object_to_point_to_id: 1
     FIXTURE
-    File.write(FIXTURES_ROOT + "/fk_pointing_to_non_existent_object.yml", fk_pointing_to_valid_object)
+    File.write(FIXTURES_ROOT + @path, fk_pointing_to_valid_object)
 
     with_verify_foreign_keys_for_fixtures do
       assert_nothing_raised do
@@ -854,7 +895,7 @@ class FixturesWithForeignKeyViolationsTest < ActiveRecord::TestCase
     end
 
   ensure
-    File.delete(FIXTURES_ROOT + "/fk_pointing_to_non_existent_object.yml")
+    File.delete(FIXTURES_ROOT + @path)
     ActiveRecord::FixtureSet.reset_cache
   end
 
@@ -912,6 +953,16 @@ class SetFixtureClassPrevailsTest < ActiveRecord::TestCase
 
   def test_uses_set_fixture_class
     assert_kind_of Post, bad_posts(:bad_welcome)
+  end
+end
+
+class FixtureWithSetModelClassPrevailsOverNamingConventionTest < ActiveRecord::TestCase
+  def test_model_class_in_fixture_file_is_respected
+    Object.const_set(:OtherPost, Class.new(ActiveRecord::Base))
+    other_posts = create_fixtures("other_posts").first
+    assert_kind_of Post, other_posts["second_welcome"].find
+  ensure
+    Object.send(:remove_const, :OtherPost)
   end
 end
 
@@ -996,6 +1047,7 @@ class TransactionalFixturesOnConnectionNotification < ActiveRecord::TestCase
       def transaction_open?; end
       def begin_transaction(*args); end
       def rollback_transaction(*args); end
+      def connect!; end
     end.new
 
     connection.pool = Class.new do
@@ -1017,6 +1069,7 @@ class TransactionalFixturesOnConnectionNotification < ActiveRecord::TestCase
       def rollback_transaction(*args)
         @rollback_transaction_called = true
       end
+      def connect!; end
     end.new
 
     connection.pool = Class.new do
@@ -1036,6 +1089,7 @@ class TransactionalFixturesOnConnectionNotification < ActiveRecord::TestCase
       def transaction_open?; end
       def begin_transaction(*args); end
       def rollback_transaction(*args); end
+      def connect!; end
     end.new
 
     connection.pool = Class.new do
@@ -1643,26 +1697,92 @@ class MultipleFixtureConnectionsTest < ActiveRecord::TestCase
   end
 
   class CompositePkFixturesTest < ActiveRecord::TestCase
-    fixtures :cpk_orders, :cpk_books, :authors
+    fixtures :cpk_orders, :cpk_books, :cpk_authors, :cpk_reviews, :cpk_order_agreements
 
     def test_generates_composite_primary_key_for_partially_filled_fixtures
-      david = authors(:david)
-      david_cpk_book = cpk_books(:cpk_known_author_david_book)
+      alice = cpk_authors(:cpk_great_author)
+      alice_cpk_book = cpk_books(:cpk_great_author_first_book)
 
-      assert_not_empty(david_cpk_book.id.compact)
-      assert_equal david.id, david_cpk_book.author_id
-      assert_not_nil david_cpk_book.number
+      assert_not_empty(alice_cpk_book.id.compact)
+      assert_equal alice_cpk_book.id.first, alice.id
+      assert_not_nil alice_cpk_book.id.last
     end
 
     def test_generates_composite_primary_key_ids
       assert_not_empty(cpk_orders(:cpk_groceries_order_1).id.compact)
 
-      assert_not_nil(cpk_books(:cpk_great_author_first_book).author_id)
-      assert_not_nil(cpk_books(:cpk_great_author_first_book).number)
+      cpk_books(:cpk_great_author_first_book).id.each do |id_column|
+        assert_not_nil(id_column)
+      end
     end
 
     def test_generates_composite_primary_key_with_unique_components
       assert_equal 2, cpk_orders(:cpk_groceries_order_1).id.uniq.size
+    end
+
+    def test_resolves_associations_using_composite_primary_keys
+      review = cpk_reviews(:first_book_review)
+      generated_book = cpk_books(:cpk_book_with_generated_pk)
+
+      assert_equal generated_book.id, [review.author_id, review.number]
+      assert_equal generated_book, review.book
+    end
+
+    def test_resolves_associations_using_composite_primary_keys_with_partially_filled_values
+      review = cpk_reviews(:second_book_review_for_book_with_partial_pk_defined)
+      book_with_partially_filled_cpk = cpk_books(:cpk_great_author_first_book)
+
+      assert_equal book_with_partially_filled_cpk.id, [review.author_id, review.number]
+      assert_equal book_with_partially_filled_cpk, review.book
+    end
+
+    def test_association_with_custom_primary_key
+      order = cpk_orders(:cpk_groceries_order_2)
+      order_agreement = cpk_order_agreements(:order_agreement_three)
+
+      _, order_id = order.id
+
+      assert_equal order_id, order_agreement.order_id
+      assert_equal order, order_agreement.order
+    end
+
+    def test_composite_identify_resolves_to_same_values
+      identify_one = ActiveRecord::FixtureSet.composite_identify("label", [:a, :b, :c])
+      identify_two = ActiveRecord::FixtureSet.composite_identify("label", [:a, :b, :c])
+
+      assert_equal identify_one, identify_two
+    end
+
+    def test_composite_identify_returns_hash_with_key_names
+      id = ActiveRecord::FixtureSet.composite_identify("order", Cpk::Order.primary_key)
+
+      assert_equal ["shop_id", "id"], id.keys
+    end
+
+    def test_composite_identify_uses_same_hashing_algorithm_as_identify_for_first_attribute
+      id_hash = ActiveRecord::FixtureSet.composite_identify("order", [:first_attribute, :second_attribute])
+      id = ActiveRecord::FixtureSet.identify("order")
+
+      assert_equal id, id_hash[:first_attribute]
+      assert_not_equal id, id_hash[:second_attribute]
+    end
+
+    def test_composite_identify_hashes_one_label_to_same_values_irrespective_of_column_names
+      id_hash_one = ActiveRecord::FixtureSet.composite_identify("order", [:first_attribute, :second_attribute])
+      id_hash_two = ActiveRecord::FixtureSet.composite_identify("order", [:shop_id, :id])
+
+      assert_equal id_hash_one.values, id_hash_two.values
+      assert_not_equal id_hash_one.keys, id_hash_two.keys
+    end
+
+    def test_composite_identify_hashes_to_same_values_based_on_position_in_key
+      id = ActiveRecord::FixtureSet.identify("order")
+      id_hash_two = ActiveRecord::FixtureSet.composite_identify("order", [:one, :two])
+      id_hash_three = ActiveRecord::FixtureSet.composite_identify("order", [:one, :two, :three])
+
+      assert_equal id, id_hash_two.values.first
+      assert_equal id, id_hash_three.values.first
+      assert_equal id_hash_two.values, id_hash_three.values.slice(0, 2)
     end
   end
 end

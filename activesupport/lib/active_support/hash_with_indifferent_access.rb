@@ -6,6 +6,8 @@ require "active_support/core_ext/hash/except"
 require "active_support/core_ext/hash/slice"
 
 module ActiveSupport
+  # = \Hash With Indifferent Access
+  #
   # Implements a hash where keys <tt>:foo</tt> and <tt>"foo"</tt> are considered
   # to be the same.
   #
@@ -37,7 +39,7 @@ module ActiveSupport
   #
   # but this class is intended for use cases where strings or symbols are the
   # expected keys and it is convenient to understand both as the same. For
-  # example the +params+ hash in Ruby on Rails.
+  # example the +params+ hash in Ruby on \Rails.
   #
   # Note that core extensions define <tt>Hash#with_indifferent_access</tt>:
   #
@@ -45,7 +47,7 @@ module ActiveSupport
   #
   # which may be handy.
   #
-  # To access this class outside of Rails, require the core extension with:
+  # To access this class outside of \Rails, require the core extension with:
   #
   #   require "active_support/core_ext/hash/indifferent_access"
   #
@@ -113,7 +115,7 @@ module ActiveSupport
     #   hash.update({ "a" => 1 }, { "b" => 2 }) # => { "a" => 1, "b" => 2 }
     #
     # The arguments can be either an
-    # <tt>ActiveSupport::HashWithIndifferentAccess</tt> or a regular +Hash+.
+    # +ActiveSupport::HashWithIndifferentAccess+ or a regular +Hash+.
     # In either case the merge respects the semantics of indifferent access.
     #
     # If the argument is a regular hash with keys +:key+ and <tt>"key"</tt> only one
@@ -383,6 +385,10 @@ module ActiveSupport
         _new_hash[key] = convert_value(value, conversion: :to_hash)
       end
       _new_hash
+    end
+
+    def to_proc
+      proc { |key| self[key] }
     end
 
     private

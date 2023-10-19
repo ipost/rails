@@ -32,6 +32,8 @@ module ActiveRecord
   end
 
   module ConnectionAdapters
+    # = Active Record PostgreSQL Adapter
+    #
     # The PostgreSQL adapter works with the native C (https://github.com/ged/ruby-pg) driver.
     #
     # Options:
@@ -106,16 +108,17 @@ module ActiveRecord
       # but significantly increases the risk of data loss if the database
       # crashes. As a result, this should not be used in production
       # environments. If you would like all created tables to be unlogged in
-      # the test environment you can add the following line to your test.rb
-      # file:
+      # the test environment you can add the following to your test.rb file:
       #
-      #   ActiveRecord::ConnectionAdapters::PostgreSQLAdapter.create_unlogged_tables = true
+      #   ActiveSupport.on_load(:active_record_postgresqladapter) do
+      #     self.create_unlogged_tables = true
+      #   end
       class_attribute :create_unlogged_tables, default: false
 
       ##
       # :singleton-method:
       # PostgreSQL supports multiple types for DateTimes. By default, if you use +datetime+
-      # in migrations, Rails will translate this to a PostgreSQL "timestamp without time zone".
+      # in migrations, \Rails will translate this to a PostgreSQL "timestamp without time zone".
       # Change this in an initializer to use another NATIVE_DATABASE_TYPES. For example, to
       # store DateTimes as "timestamp with time zone":
       #
@@ -224,7 +227,7 @@ module ActiveRecord
         true
       end
 
-      def supports_unique_keys?
+      def supports_unique_constraints?
         true
       end
 
@@ -275,8 +278,20 @@ module ActiveRecord
         database_version >= 12_00_00 # >= 12.0
       end
 
+      def supports_identity_columns? # :nodoc:
+        database_version >= 10_00_00 # >= 10.0
+      end
+
+      def supports_nulls_not_distinct?
+        database_version >= 15_00_00 # >= 15.0
+      end
+
       def index_algorithms
         { concurrently: "CONCURRENTLY" }
+      end
+
+      def return_value_after_insert?(column) # :nodoc:
+        column.auto_populated?
       end
 
       class StatementPool < ConnectionAdapters::StatementPool # :nodoc:
@@ -325,6 +340,10 @@ module ActiveRecord
         @notice_receiver_sql_warnings = []
 
         @use_insert_returning = @config.key?(:insert_returning) ? self.class.type_cast_config_to_boolean(@config[:insert_returning]) : true
+      end
+
+      def connected?
+        !(@raw_connection.nil? || @raw_connection.finished?)
       end
 
       # Is this connection alive and ready for queries?
@@ -457,7 +476,7 @@ module ActiveRecord
         sql = +"CREATE EXTENSION IF NOT EXISTS \"#{name}\""
         sql << " SCHEMA #{schema}" if schema
 
-        exec_query(sql).tap { reload_type_map }
+        internal_exec_query(sql).tap { reload_type_map }
       end
 
       # Removes an extension from the database.
@@ -466,7 +485,7 @@ module ActiveRecord
       #   Set to +:cascade+ to drop dependent objects as well.
       #   Defaults to false.
       def disable_extension(name, force: false)
-        exec_query("DROP EXTENSION IF EXISTS \"#{name}\"#{' CASCADE' if force == :cascade}").tap {
+        internal_exec_query("DROP EXTENSION IF EXISTS \"#{name}\"#{' CASCADE' if force == :cascade}").tap {
           reload_type_map
         }
       end
@@ -480,7 +499,7 @@ module ActiveRecord
       end
 
       def extensions
-        exec_query("SELECT extname FROM pg_extension", "SCHEMA", allow_retry: true, uses_transaction: false).cast_values
+        internal_exec_query("SELECT extname FROM pg_extension", "SCHEMA", allow_retry: true, materialize_transactions: false).cast_values
       end
 
       # Returns a list of defined enum types, and their values.
@@ -498,7 +517,7 @@ module ActiveRecord
           GROUP BY type.OID, n.nspname, type.typname;
         SQL
 
-        exec_query(query, "SCHEMA", allow_retry: true, uses_transaction: false).cast_values.each_with_object({}) do |row, memo|
+        internal_exec_query(query, "SCHEMA", allow_retry: true, materialize_transactions: false).cast_values.each_with_object({}) do |row, memo|
           name, schema = row[0], row[2]
           schema = nil if schema == current_schema
           full_name = [schema, name].compact.join(".")
@@ -525,7 +544,7 @@ module ActiveRecord
           END
           $$;
         SQL
-        exec_query(query)
+        internal_exec_query(query)
       end
 
       # Drops an enum type.
@@ -541,7 +560,44 @@ module ActiveRecord
         query = <<~SQL
           DROP TYPE#{' IF EXISTS' if options[:if_exists]} #{quote_table_name(name)};
         SQL
-        exec_query(query)
+        internal_exec_query(query)
+      end
+
+      # Rename an existing enum type to something else.
+      def rename_enum(name, options = {})
+        to = options.fetch(:to) { raise ArgumentError, ":to is required" }
+
+        exec_query("ALTER TYPE #{quote_table_name(name)} RENAME TO #{to}").tap { reload_type_map }
+      end
+
+      # Add enum value to an existing enum type.
+      def add_enum_value(type_name, value, options = {})
+        before, after = options.values_at(:before, :after)
+        sql = +"ALTER TYPE #{quote_table_name(type_name)} ADD VALUE '#{value}'"
+
+        if before && after
+          raise ArgumentError, "Cannot have both :before and :after at the same time"
+        elsif before
+          sql << " BEFORE '#{before}'"
+        elsif after
+          sql << " AFTER '#{after}'"
+        end
+
+        execute(sql).tap { reload_type_map }
+      end
+
+      # Rename enum value on an existing enum type.
+      def rename_enum_value(type_name, options = {})
+        unless database_version >= 10_00_00 # >= 10.0
+          raise ArgumentError, "Renaming enum values is only supported in PostgreSQL 10 or later"
+        end
+
+        from = options.fetch(:from) { raise ArgumentError, ":from is required" }
+        to = options.fetch(:to) { raise ArgumentError, ":to is required" }
+
+        execute("ALTER TYPE #{quote_table_name(type_name)} RENAME VALUE '#{from}' TO '#{to}'").tap {
+          reload_type_map
+        }
       end
 
       # Returns the configured supported identifier length supported by PostgreSQL
@@ -549,18 +605,10 @@ module ActiveRecord
         @max_identifier_length ||= query_value("SHOW max_identifier_length", "SCHEMA").to_i
       end
 
-      # Returns the maximum length of a table name.
-      def table_name_length
-        # PostgreSQL automatically creates an index for PRIMARY KEY with name consisting of
-        # truncated table name and "_pkey" suffix fitting into max_identifier_length number of characters.
-        # We allow smaller table names to be able to correctly rename this index when renaming the table.
-        max_identifier_length - "_pkey".length
-      end
-
       # Set the authorized user for this session
       def session_auth=(user)
         clear_cache!
-        internal_execute("SET SESSION AUTHORIZATION #{user}", nil, uses_transaction: true)
+        internal_execute("SET SESSION AUTHORIZATION #{user}", nil, materialize_transactions: true)
       end
 
       def use_insert_returning?
@@ -569,7 +617,9 @@ module ActiveRecord
 
       # Returns the version of the connected PostgreSQL server.
       def get_database_version # :nodoc:
-        valid_raw_connection.server_version
+        with_raw_connection do |conn|
+          conn.server_version
+        end
       end
       alias :postgresql_version :database_version
 
@@ -669,9 +719,7 @@ module ActiveRecord
       end
 
       private
-        def type_map
-          @type_map ||= Type::HashLookupTypeMap.new
-        end
+        attr_reader :type_map
 
         def initialize_type_map(m = type_map)
           self.class.initialize_type_map(m)
@@ -736,7 +784,7 @@ module ActiveRecord
           case exception.result.try(:error_field, PG::PG_DIAG_SQLSTATE)
           when nil
             if exception.message.match?(/connection is closed/i)
-              ConnectionNotEstablished.new(exception)
+              ConnectionNotEstablished.new(exception, connection_pool: @pool)
             elsif exception.is_a?(PG::ConnectionBad)
               # libpq message style always ends with a newline; the pg gem's internal
               # errors do not. We separate these cases because a pg-internal
@@ -744,33 +792,33 @@ module ActiveRecord
               # whereas a libpq failure could have occurred at any time (meaning the
               # server may have already executed part or all of the query).
               if exception.message.end_with?("\n")
-                ConnectionFailed.new(exception)
+                ConnectionFailed.new(exception, connection_pool: @pool)
               else
-                ConnectionNotEstablished.new(exception)
+                ConnectionNotEstablished.new(exception, connection_pool: @pool)
               end
             else
               super
             end
           when UNIQUE_VIOLATION
-            RecordNotUnique.new(message, sql: sql, binds: binds)
+            RecordNotUnique.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when FOREIGN_KEY_VIOLATION
-            InvalidForeignKey.new(message, sql: sql, binds: binds)
+            InvalidForeignKey.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when VALUE_LIMIT_VIOLATION
-            ValueTooLong.new(message, sql: sql, binds: binds)
+            ValueTooLong.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when NUMERIC_VALUE_OUT_OF_RANGE
-            RangeError.new(message, sql: sql, binds: binds)
+            RangeError.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when NOT_NULL_VIOLATION
-            NotNullViolation.new(message, sql: sql, binds: binds)
+            NotNullViolation.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when SERIALIZATION_FAILURE
-            SerializationFailure.new(message, sql: sql, binds: binds)
+            SerializationFailure.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when DEADLOCK_DETECTED
-            Deadlocked.new(message, sql: sql, binds: binds)
+            Deadlocked.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when DUPLICATE_DATABASE
-            DatabaseAlreadyExists.new(message, sql: sql, binds: binds)
+            DatabaseAlreadyExists.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when LOCK_NOT_AVAILABLE
-            LockWaitTimeout.new(message, sql: sql, binds: binds)
+            LockWaitTimeout.new(message, sql: sql, binds: binds, connection_pool: @pool)
           when QUERY_CANCELED
-            QueryCanceled.new(message, sql: sql, binds: binds)
+            QueryCanceled.new(message, sql: sql, binds: binds, connection_pool: @pool)
           else
             super
           end
@@ -799,7 +847,7 @@ module ActiveRecord
         def load_additional_types(oids = nil)
           initializer = OID::TypeMapInitializer.new(type_map)
           load_types_queries(initializer, oids) do |query|
-            execute_and_clear(query, "SCHEMA", [], allow_retry: true, uses_transaction: false) do |records|
+            execute_and_clear(query, "SCHEMA", [], allow_retry: true, materialize_transactions: false) do |records|
               initializer.run(records)
             end
           end
@@ -822,14 +870,14 @@ module ActiveRecord
 
         FEATURE_NOT_SUPPORTED = "0A000" # :nodoc:
 
-        def execute_and_clear(sql, name, binds, prepare: false, async: false, allow_retry: false, uses_transaction: true)
+        def execute_and_clear(sql, name, binds, prepare: false, async: false, allow_retry: false, materialize_transactions: true)
           sql = transform_query(sql)
           check_if_write_query(sql)
 
           if !prepare || without_prepared_statement?(binds)
-            result = exec_no_cache(sql, name, binds, async: async, allow_retry: allow_retry, uses_transaction: uses_transaction)
+            result = exec_no_cache(sql, name, binds, async: async, allow_retry: allow_retry, materialize_transactions: materialize_transactions)
           else
-            result = exec_cache(sql, name, binds, async: async, allow_retry: allow_retry, uses_transaction: uses_transaction)
+            result = exec_cache(sql, name, binds, async: async, allow_retry: allow_retry, materialize_transactions: materialize_transactions)
           end
           begin
             ret = yield result
@@ -839,7 +887,7 @@ module ActiveRecord
           ret
         end
 
-        def exec_no_cache(sql, name, binds, async:, allow_retry:, uses_transaction:)
+        def exec_no_cache(sql, name, binds, async:, allow_retry:, materialize_transactions:)
           mark_transaction_written_if_write(sql)
 
           # make sure we carry over any changes to ActiveRecord.default_timezone that have been
@@ -854,7 +902,7 @@ module ActiveRecord
           end
         end
 
-        def exec_cache(sql, name, binds, async:, allow_retry:, uses_transaction:)
+        def exec_cache(sql, name, binds, async:, allow_retry:, materialize_transactions:)
           mark_transaction_written_if_write(sql)
 
           update_typemap_for_default_timezone
@@ -862,8 +910,8 @@ module ActiveRecord
           stmt_key = prepare_statement(sql, binds)
           type_casted_binds = type_casted_binds(binds)
 
-          log(sql, name, binds, type_casted_binds, stmt_key, async: async) do
-            with_raw_connection do |conn|
+          with_raw_connection do |conn|
+            log(sql, name, binds, type_casted_binds, stmt_key, async: async) do
               conn.exec_prepared(stmt_key, type_casted_binds)
             end
           end
@@ -913,7 +961,7 @@ module ActiveRecord
         # Prepare the statement if it hasn't been prepared, return
         # the statement key.
         def prepare_statement(sql, binds)
-          with_raw_connection(allow_retry: true, uses_transaction: false) do |conn|
+          with_raw_connection(allow_retry: true, materialize_transactions: false) do |conn|
             sql_key = sql_key(sql)
             unless @statements.key? sql_key
               nextkey = @statements.next_key
@@ -934,6 +982,8 @@ module ActiveRecord
         # connected server's characteristics.
         def connect
           @raw_connection = self.class.new_client(@connection_parameters)
+        rescue ConnectionNotEstablished => ex
+          raise ex.set_pool(@pool)
         end
 
         def reconnect
@@ -949,6 +999,8 @@ module ActiveRecord
         # Configures the encoding, verbosity, schema search path, and time zone of the connection.
         # This is called by #connect and should not be called manually.
         def configure_connection
+          super
+
           if @config[:encoding]
             @raw_connection.set_client_encoding(@config[:encoding])
           end
@@ -960,7 +1012,7 @@ module ActiveRecord
               message = result.error_field(PG::Result::PG_DIAG_MESSAGE_PRIMARY)
               code = result.error_field(PG::Result::PG_DIAG_SQLSTATE)
               level = result.error_field(PG::Result::PG_DIAG_SEVERITY)
-              @notice_receiver_sql_warnings << SQLWarning.new(message, code, level)
+              @notice_receiver_sql_warnings << SQLWarning.new(message, code, level, nil, @pool)
             end
           end
 
@@ -1029,6 +1081,7 @@ module ActiveRecord
               SELECT a.attname, format_type(a.atttypid, a.atttypmod),
                      pg_get_expr(d.adbin, d.adrelid), a.attnotnull, a.atttypid, a.atttypmod,
                      c.collname, col_description(a.attrelid, a.attnum) AS comment,
+                     #{supports_identity_columns? ? 'attidentity' : quote('')} AS identity,
                      #{supports_virtual_columns? ? 'attgenerated' : quote('')} as attgenerated
                 FROM pg_attribute a
                 LEFT JOIN pg_attrdef d ON a.attrelid = d.adrelid AND a.attnum = d.adnum
@@ -1038,11 +1091,6 @@ module ActiveRecord
                  AND a.attnum > 0 AND NOT a.attisdropped
                ORDER BY a.attnum
           SQL
-        end
-
-        def extract_table_ref_from_insert_sql(sql)
-          sql[/into\s("[A-Za-z0-9_."\[\]\s]+"|[A-Za-z0-9_."\[\]]+)\s*/im]
-          $1.strip if $1
         end
 
         def arel_visitor
@@ -1073,7 +1121,7 @@ module ActiveRecord
                     AND castsource = #{quote column.sql_type}::regtype
                 )
               SQL
-              execute_and_clear(sql, "SCHEMA", [], allow_retry: true, uses_transaction: false) do |result|
+              execute_and_clear(sql, "SCHEMA", [], allow_retry: true, materialize_transactions: false) do |result|
                 result.getvalue(0, 0)
               end
             end
@@ -1094,7 +1142,7 @@ module ActiveRecord
               PG::TextDecoder::TimestampUtc :
               PG::TextDecoder::TimestampWithoutTimeZone
 
-            @timestamp_decoder = decoder_class.new(@timestamp_decoder.to_h)
+            @timestamp_decoder = decoder_class.new(**@timestamp_decoder.to_h)
             @raw_connection.type_map_for_results.add_coder(@timestamp_decoder)
 
             @mapped_default_timezone = default_timezone
@@ -1130,7 +1178,7 @@ module ActiveRecord
             FROM pg_type as t
             WHERE t.typname IN (%s)
           SQL
-          coders = execute_and_clear(query, "SCHEMA", [], allow_retry: true, uses_transaction: false) do |result|
+          coders = execute_and_clear(query, "SCHEMA", [], allow_retry: true, materialize_transactions: false) do |result|
             result.filter_map { |row| construct_coder(row, coders_by_name[row["typname"]]) }
           end
 

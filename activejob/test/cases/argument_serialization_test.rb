@@ -5,6 +5,8 @@ require "helper"
 require "active_job/arguments"
 require "models/person"
 require "active_support/core_ext/hash/indifferent_access"
+require "active_support/core_ext/integer/time"
+require "active_support/duration"
 require "jobs/kwargs_job"
 require "jobs/arguments_round_trip_job"
 require "support/stubs/strong_parameters"
@@ -15,6 +17,11 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
   end
 
   class ClassArgument; end
+
+  class MyClassWithPermitted
+    def self.permitted?
+    end
+  end
 
   setup do
     @person = Person.find("5")
@@ -57,7 +64,7 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
       Primitive serialization of BigDecimal job arguments is deprecated as it may serialize via .to_s using certain queue adapters.
       Enable config.active_job.use_big_decimal_serializer to use BigDecimalSerializer instead, which will be mandatory in Rails 7.2.
 
-      Note that if you application has multiple replicas, you should only enable this setting after successfully deploying your app to Rails 7.1 first.
+      Note that if your application has multiple replicas, you should only enable this setting after successfully deploying your app to Rails 7.1 first.
       This will ensure that during your deployment all replicas are capable of deserializing arguments serialized with BigDecimalSerializer.
     MSG
       assert_equal(
@@ -110,6 +117,11 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
       { "a" => 1, "_aj_hash_with_indifferent_access" => true },
       ActiveJob::Arguments.serialize([parameters]).first
     )
+  end
+
+  # Regression test to #48561
+  test "serialize a class with permitted? defined" do
+    assert_arguments_unchanged MyClassWithPermitted
   end
 
   test "serialize a hash" do
@@ -176,6 +188,12 @@ class ArgumentSerializationTest < ActiveSupport::TestCase
       assert_instance_of ActiveSupport::TimeWithZone, perform_round_trip([time_with_zone]).first
       assert_arguments_unchanged time_with_zone
     end
+  end
+
+  test "should maintain a functional duration" do
+    duration = perform_round_trip([1.year]).first
+    assert_kind_of Hash, duration.parts
+    assert_equal 2.years, duration + 1.year
   end
 
   test "should disallow non-string/symbol hash keys" do

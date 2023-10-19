@@ -38,6 +38,7 @@ ActiveRecord::Schema.define do
     t.string :json_data_empty, null: true, default: "", limit: 1024
     t.text :params
     t.references :account
+    t.json :json_options
   end
 
   create_table :admin_user_jsons, force: true do |t|
@@ -191,6 +192,7 @@ ActiveRecord::Schema.define do
   end
 
   create_table :cars, force: true do |t|
+    t.belongs_to :person
     t.string  :name
     t.integer :engines_count
     t.integer :wheels_count, default: 0, null: false
@@ -205,7 +207,7 @@ ActiveRecord::Schema.define do
   create_table :carriers, force: true
 
   create_table :carts, force: true, primary_key: [:shop_id, :id] do |t|
-    if ActiveRecord::TestCase.current_adapter?(:Mysql2Adapter)
+    if ActiveRecord::TestCase.current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
       t.bigint :id, index: true, auto_increment: true, null: false
     else
       t.bigint :id, index: true, null: false
@@ -239,17 +241,56 @@ ActiveRecord::Schema.define do
     t.references :citation
   end
 
-  create_table :cpk_books, primary_key: [:author_id, :number], force: true do |t|
+  create_table :cpk_books, primary_key: [:author_id, :id], force: true do |t|
     t.integer :author_id
-    t.integer :number
+    t.integer :id
     t.string :title
     t.integer :revision
+    t.integer :order_id
+    t.integer :shop_id
   end
 
-  create_table :cpk_orders, primary_key: [:shop_id, :id], force: true do |t|
-    t.integer :shop_id
+  create_table :cpk_chapters, primary_key: [:author_id, :id], force: true do |t|
+    t.integer :author_id
     t.integer :id
+    t.integer :book_id
+    t.string :title
+  end
+
+  create_table :cpk_authors, force: true do |t|
+    t.string :name
+  end
+
+  create_table :cpk_reviews, force: true do |t|
+    t.integer :author_id
+    t.integer :number
+    t.integer :rating
+    t.string :comment
+  end
+
+  # not a composite primary key on the db level to get autoincrement behavior for `id` column
+  # composite primary key is configured on the model level
+  create_table :cpk_orders, force: true do |t|
+    t.integer :shop_id
     t.string :status
+  end
+
+  create_table :cpk_order_tags, primary_key: [:order_id, :tag_id], force: true do |t|
+    t.integer :order_id
+    t.integer :tag_id
+    t.string :attached_by
+    t.string :attached_reason
+  end
+
+  create_table :cpk_tags, force: true do |t|
+    t.string :name, null: false
+  end
+
+  create_table :cpk_order_agreements, force: true do |t|
+    t.integer :order_id
+    t.string :signature
+
+    t.index :order_id
   end
 
   create_table :paragraphs, force: true do |t|
@@ -338,8 +379,14 @@ ActiveRecord::Schema.define do
     t.integer :company
   end
 
+  create_table :comment_overlapping_counter_caches, force: true do |t|
+    t.integer :user_comments_count_id
+    t.integer :post_comments_count_id
+    t.references :commentable, polymorphic: true, index: false
+  end
+
   create_table :companies, force: true do |t|
-    t.string  :type
+    t.string :type
     t.references :firm, index: false
     t.string  :firm_name
     t.string  :name
@@ -352,8 +399,14 @@ ActiveRecord::Schema.define do
     t.index [:name, :description], length: 10
     t.index [:firm_id, :type, :rating], name: "company_index", length: { type: 10 }, order: { rating: :desc }
     t.index [:firm_id, :type], name: "company_partial_index", where: "(rating > 10)"
+    t.index [:firm_id], name: "company_nulls_not_distinct", nulls_not_distinct: true
     t.index :name, name: "company_name_index", using: :btree
-    t.index "(CASE WHEN rating > 0 THEN lower(name) END) DESC", name: "company_expression_index" if supports_expression_index?
+    if supports_expression_index?
+      t.index "(CASE WHEN rating > 0 THEN lower(name) END) DESC", name: "company_expression_index"
+      if ActiveRecord::TestCase.current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
+        t.index "(CONCAT_WS(`firm_name`, `name`, _utf8mb4' '))", name: "full_name_index"
+      end
+    end
   end
 
   create_table :content, force: true do |t|
@@ -891,6 +944,7 @@ ActiveRecord::Schema.define do
     t.references :best_friend_of
     t.integer    :insures, null: false, default: 0
     t.timestamp :born_at
+    t.integer :cars_count, default: 0
     t.timestamps null: false
   end
 
@@ -940,6 +994,10 @@ ActiveRecord::Schema.define do
   create_table :postesques, force: true do |t|
     t.string :author_name
     t.string :author_id
+  end
+
+  create_table :post_comments_counts, force: true do |t|
+    t.integer :comments_count, default: 0
   end
 
   create_table :serialized_posts, force: true do |t|
@@ -1166,6 +1224,7 @@ ActiveRecord::Schema.define do
       t.text     :content
       t.text     :important
     end
+    t.blob     :binary_content
     t.boolean  :approved, default: true
     t.integer  :replies_count, default: 0
     t.integer  :unique_replies_count, default: 0
@@ -1379,6 +1438,10 @@ ActiveRecord::Schema.define do
     t.timestamps null: true
   end
 
+  create_table :user_comments_counts, force: true do |t|
+    t.integer :comments_count, default: 0
+  end
+
   create_table :test_with_keyword_column_name, force: true do |t|
     t.string :desc
   end
@@ -1391,10 +1454,6 @@ ActiveRecord::Schema.define do
   create_table :toooooooooooooooooooooooooooooooooo_long_table_names, force: true do |t|
     t.bigint :toooooooo_long_a_id, null: false
     t.bigint :toooooooo_long_b_id, null: false
-  end
-
-  create_table :pk_with_defaults, id: false, force: true do |t|
-    t.bigint :id, default: 123
   end
 end
 

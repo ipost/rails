@@ -5,6 +5,7 @@ require "active_support/multibyte/chars"
 
 module ActiveRecord
   module ConnectionAdapters # :nodoc:
+    # = Active Record Connection Adapters \Quoting
     module Quoting
       # Quotes the column value to help prevent
       # {SQL injection attacks}[https://en.wikipedia.org/wiki/SQL_injection].
@@ -101,7 +102,7 @@ module ActiveRecord
       # Override to return the quoted table name for assignment. Defaults to
       # table quoting.
       #
-      # This works for mysql2 where table.column can be used to
+      # This works for MySQL where table.column can be used to
       # resolve ambiguity.
       #
       # We override this in the sqlite3 and postgresql adapters to use only

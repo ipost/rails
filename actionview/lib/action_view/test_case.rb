@@ -9,6 +9,9 @@ require "rails-dom-testing"
 
 module ActionView
   # = Action View Test Case
+  #
+  # Read more about <tt>ActionView::TestCase</tt> in {Testing Rails Applications}[https://guides.rubyonrails.org/testing.html#testing-view-partials]
+  # in the guides.
   class TestCase < ActiveSupport::TestCase
     class TestController < ActionController::Base
       include ActionDispatch::TestProcess
@@ -57,9 +60,96 @@ module ActionView
       include ActiveSupport::Testing::ConstantLookup
 
       delegate :lookup_context, to: :controller
-      attr_accessor :controller, :request, :output_buffer, :rendered
+      attr_accessor :controller, :request, :output_buffer
 
       module ClassMethods
+        def inherited(descendant) # :nodoc:
+          super
+
+          descendant_content_class = content_class.dup
+
+          if descendant_content_class.respond_to?(:set_temporary_name)
+            descendant_content_class.set_temporary_name("rendered_content")
+          end
+
+          descendant.content_class = descendant_content_class
+        end
+
+        # Register a callable to parse rendered content for a given template
+        # format.
+        #
+        # Each registered parser will also define a +#rendered.[FORMAT]+ helper
+        # method, where +[FORMAT]+ corresponds to the value of the
+        # +format+ argument.
+        #
+        # === Arguments
+        #
+        # <tt>format</tt> - Symbol the name of the format used to render view's content
+        # <tt>callable</tt> - Callable to parse the String. Accepts the String.
+        #                     value as its only argument.
+        # <tt>block</tt> - Block serves as the parser when the
+        #                  <tt>callable</tt> is omitted.
+        #
+        # By default, ActionView::TestCase defines a parser for:
+        #
+        #   * :html - returns an instance of Nokogiri::XML::Node
+        #   * :json - returns an instance of ActiveSupport::HashWithIndifferentAccess
+        #
+        # Each pre-registered parser also defines a corresponding helper:
+        #
+        #   * :html - defines `rendered.html`
+        #   * :json - defines `rendered.json`
+        #
+        # === Examples
+        #
+        #   test "renders HTML" do
+        #     article = Article.create!(title: "Hello, world")
+        #
+        #     render partial: "articles/article", locals: { article: article }
+        #
+        #     assert_pattern { rendered.html.at("main h1") => { content: "Hello, world" } }
+        #   end
+        #
+        #   test "renders JSON" do
+        #     article = Article.create!(title: "Hello, world")
+        #
+        #     render formats: :json, partial: "articles/article", locals: { article: article }
+        #
+        #     assert_pattern { rendered.json => { title: "Hello, world" } }
+        #   end
+        #
+        # To parse the rendered content into RSS, register a call to <tt>RSS::Parser.parse</tt>:
+        #
+        #   register_parser :rss, -> rendered { RSS::Parser.parse(rendered) }
+        #
+        #   test "renders RSS" do
+        #     article = Article.create!(title: "Hello, world")
+        #
+        #     render formats: :rss, partial: article
+        #
+        #     assert_equal "Hello, world", rendered.rss.items.last.title
+        #   end
+        #
+        # To parse the rendered content into a Capybara::Simple::Node,
+        # re-register an <tt>:html</tt> parser with a call to
+        # <tt>Capybara.string</tt>:
+        #
+        #   register_parser :html, -> rendered { Capybara.string(rendered) }
+        #
+        #   test "renders HTML" do
+        #     article = Article.create!(title: "Hello, world")
+        #
+        #     render partial: article
+        #
+        #     rendered.html.assert_css "h1", text: "Hello, world"
+        #   end
+        def register_parser(format, callable = nil, &block)
+          parser = callable || block || :itself.to_proc
+          content_class.redefine_method(format) do
+            parser.call(to_s)
+          end
+        end
+
         def tests(helper_class)
           case helper_class
           when String, Symbol
@@ -105,6 +195,27 @@ module ActionView
         end
       end
 
+      included do
+        class_attribute :content_class, instance_accessor: false, default: Content
+
+        setup :setup_with_controller
+
+        register_parser :html, -> rendered { Rails::Dom::Testing.html_document.parse(rendered).root }
+        register_parser :json, -> rendered { JSON.parse(rendered, object_class: ActiveSupport::HashWithIndifferentAccess) }
+
+        ActiveSupport.run_load_hooks(:action_view_test_case, self)
+
+        helper do
+          def protect_against_forgery?
+            false
+          end
+
+          def _test_case
+            controller._test_case
+          end
+        end
+      end
+
       def setup_with_controller
         controller_class = Class.new(ActionView::TestCase::TestController)
         @controller = controller_class.new
@@ -131,8 +242,62 @@ module ActionView
         @_rendered_views ||= RenderedViewsCollection.new
       end
 
+      # Returns the content rendered by the last +render+ call.
+      #
+      # The returned object behaves like a string but also exposes a number of methods
+      # that allows you to parse the content string in formats registered using
+      # <tt>.register_parser</tt>.
+      #
+      # By default includes the following parsers:
+      #
+      # +.html+
+      #
+      # Parse the <tt>rendered</tt> content String into HTML. By default, this means
+      # a <tt>Nokogiri::XML::Node</tt>.
+      #
+      #   test "renders HTML" do
+      #     article = Article.create!(title: "Hello, world")
+      #
+      #     render partial: "articles/article", locals: { article: article }
+      #
+      #     assert_pattern { rendered.html.at("main h1") => { content: "Hello, world" } }
+      #   end
+      #
+      # To parse the rendered content into a <tt>Capybara::Simple::Node</tt>,
+      # re-register an <tt>:html</tt> parser with a call to
+      # <tt>Capybara.string</tt>:
+      #
+      #   register_parser :html, -> rendered { Capybara.string(rendered) }
+      #
+      #   test "renders HTML" do
+      #     article = Article.create!(title: "Hello, world")
+      #
+      #     render partial: article
+      #
+      #     rendered.html.assert_css "h1", text: "Hello, world"
+      #   end
+      #
+      # +.json+
+      #
+      # Parse the <tt>rendered</tt> content String into JSON. By default, this means
+      # a <tt>ActiveSupport::HashWithIndifferentAccess</tt>.
+      #
+      #   test "renders JSON" do
+      #     article = Article.create!(title: "Hello, world")
+      #
+      #     render formats: :json, partial: "articles/article", locals: { article: article }
+      #
+      #     assert_pattern { rendered.json => { title: "Hello, world" } }
+      #   end
+      def rendered
+        @_rendered ||= self.class.content_class.new(@rendered)
+      end
+
       def _routes
         @controller._routes if @controller.respond_to?(:_routes)
+      end
+
+      class Content < SimpleDelegator
       end
 
       # Need to experiment if this priority is the best one: rendered => output_buffer
@@ -161,25 +326,10 @@ module ActionView
         end
       end
 
-      included do
-        setup :setup_with_controller
-        ActiveSupport.run_load_hooks(:action_view_test_case, self)
-
-        helper do
-          def protect_against_forgery?
-            false
-          end
-
-          def _test_case
-            controller._test_case
-          end
-        end
-      end
-
     private
       # Need to experiment if this priority is the best one: rendered => output_buffer
       def document_root_element
-        Nokogiri::HTML::Document.parse(@rendered.blank? ? @output_buffer.to_str : @rendered).root
+        Rails::Dom::Testing.html_document.parse(@rendered.blank? ? @output_buffer.to_str : @rendered).root
       end
 
       module Locals
@@ -279,6 +429,7 @@ module ActionView
           super
         end
       end
+      ruby2_keywords(:method_missing)
 
       def respond_to_missing?(name, include_private = false)
         begin

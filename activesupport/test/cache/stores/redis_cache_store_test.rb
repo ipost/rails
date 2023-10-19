@@ -22,7 +22,7 @@ module ActiveSupport::Cache::RedisCacheStoreTests
   REDIS_URL = ENV["REDIS_URL"] || "redis://localhost:6379/0"
   REDIS_URLS = ENV["REDIS_URLS"]&.split(",") || %w[ redis://localhost:6379/0 redis://localhost:6379/1 ]
 
-  if ENV["CI"]
+  if ENV["BUILDKITE"]
     REDIS_UP = true
   else
     begin
@@ -110,9 +110,25 @@ module ActiveSupport::Cache::RedisCacheStoreTests
       assert_same @cache.redis, redis_instance
     end
 
+    test "validate pool arguments" do
+      assert_raises TypeError do
+        build(url: REDIS_URL, pool: { size: [] })
+      end
+
+      assert_raises TypeError do
+        build(url: REDIS_URL, pool: { timeout: [] })
+      end
+
+      build(url: REDIS_URL, pool: { size: "12", timeout: "1.5" })
+    end
+
+    test "instantiating the store doesn't connect to Redis" do
+      build(url: "redis://localhost:1")
+    end
+
     private
       def build(**kwargs)
-        ActiveSupport::Cache::RedisCacheStore.new(**kwargs.merge(pool: false)).tap(&:redis)
+        ActiveSupport::Cache::RedisCacheStore.new(pool: false, **kwargs).tap(&:redis)
       end
   end
 
@@ -125,6 +141,8 @@ module ActiveSupport::Cache::RedisCacheStoreTests
       @cache = lookup_store(expires_in: 60)
       # @cache.logger = Logger.new($stdout)  # For test debugging
 
+      @cache_no_ttl = lookup_store
+
       # For LocalCacheBehavior tests
       @peek = lookup_store(expires_in: 60)
     end
@@ -135,7 +153,9 @@ module ActiveSupport::Cache::RedisCacheStoreTests
 
     teardown do
       @cache.clear
-      @cache.redis.disconnect!
+      @cache.redis.with do |r|
+        r.respond_to?(:on_each_node, true) ? r.send(:on_each_node, :disconnect!) : r.disconnect!
+      end
     end
   end
 
@@ -143,13 +163,17 @@ module ActiveSupport::Cache::RedisCacheStoreTests
     include CacheStoreBehavior
     include CacheStoreVersionBehavior
     include CacheStoreCoderBehavior
+    include CacheStoreCompressionBehavior
+    include CacheStoreFormatVersionBehavior
+    include CacheStoreSerializerBehavior
     include LocalCacheBehavior
     include CacheIncrementDecrementBehavior
     include CacheInstrumentationBehavior
+    include CacheLoggingBehavior
     include EncodedKeyCacheBehavior
 
     def test_fetch_multi_uses_redis_mget
-      assert_called(@cache.redis, :mget, returns: []) do
+      assert_called(redis_backend, :mget, returns: []) do
         @cache.fetch_multi("a", "b", "c") do |key|
           key * 2
         end
@@ -157,54 +181,96 @@ module ActiveSupport::Cache::RedisCacheStoreTests
     end
 
     def test_fetch_multi_with_namespace
-      assert_called_with(@cache.redis, :mget, ["custom-namespace:a", "custom-namespace:b", "custom-namespace:c"], returns: []) do
+      assert_called_with(redis_backend, :mget, ["custom-namespace:a", "custom-namespace:b", "custom-namespace:c"], returns: []) do
         @cache.fetch_multi("a", "b", "c", namespace: "custom-namespace") do |key|
           key * 2
         end
       end
     end
 
-    def test_fetch_multi_without_names
-      assert_not_called(@cache.redis, :mget) do
-        @cache.fetch_multi() { }
+    def test_write_expires_at
+      @cache.write "key_with_expires_at", "bar", expires_at: 30.minutes.from_now
+      redis_backend do |r|
+        assert r.ttl("#{@namespace}:key_with_expires_at") > 0
       end
     end
 
-    def test_write_expires_at
-      @cache.write "key_with_expires_at", "bar", expires_at: 30.minutes.from_now
-      assert @cache.redis.ttl("#{@namespace}:key_with_expires_at") > 0
+    def test_increment_ttl
+      # existing key
+      redis_backend(@cache_no_ttl) { |r| r.set "#{@namespace}:jar", 10 }
+      @cache_no_ttl.increment "jar", 1
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.get("#{@namespace}:jar").to_i == 11
+        assert r.ttl("#{@namespace}:jar") < 0
+      end
+
+      # new key
+      @cache_no_ttl.increment "kar", 1
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.get("#{@namespace}:kar").to_i == 1
+        assert r.ttl("#{@namespace}:kar") < 0
+      end
     end
 
     def test_increment_expires_in
       @cache.increment "foo", 1, expires_in: 60
-      assert @cache.redis.exists?("#{@namespace}:foo")
-      assert @cache.redis.ttl("#{@namespace}:foo") > 0
+      redis_backend do |r|
+        assert r.exists?("#{@namespace}:foo")
+        assert r.ttl("#{@namespace}:foo") > 0
+      end
 
       # key and ttl exist
-      @cache.redis.setex "#{@namespace}:bar", 120, 1
+      redis_backend { |r| r.setex "#{@namespace}:bar", 120, 1 }
       @cache.increment "bar", 1, expires_in: 60
-      assert @cache.redis.ttl("#{@namespace}:bar") > 60
+      redis_backend do |r|
+        assert r.ttl("#{@namespace}:bar") > 60
+      end
 
       # key exist but not have expire
-      @cache.redis.set "#{@namespace}:dar", 10
-      @cache.increment "dar", 1, expires_in: 60
-      assert @cache.redis.ttl("#{@namespace}:dar") > 0
+      redis_backend(@cache_no_ttl) { |r| r.set "#{@namespace}:dar", 10 }
+      @cache_no_ttl.increment "dar", 1, expires_in: 60
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.ttl("#{@namespace}:dar") > 0
+      end
+    end
+
+    def test_decrement_ttl
+      # existing key
+      redis_backend(@cache_no_ttl) { |r| r.set "#{@namespace}:jar", 10 }
+      @cache_no_ttl.decrement "jar", 1
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.get("#{@namespace}:jar").to_i == 9
+        assert r.ttl("#{@namespace}:jar") < 0
+      end
+
+      # new key
+      @cache_no_ttl.decrement "kar", 1
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.get("#{@namespace}:kar").to_i == -1
+        assert r.ttl("#{@namespace}:kar") < 0
+      end
     end
 
     def test_decrement_expires_in
       @cache.decrement "foo", 1, expires_in: 60
-      assert @cache.redis.exists?("#{@namespace}:foo")
-      assert @cache.redis.ttl("#{@namespace}:foo") > 0
+      redis_backend do |r|
+        assert r.exists?("#{@namespace}:foo")
+        assert r.ttl("#{@namespace}:foo") > 0
+      end
 
       # key and ttl exist
-      @cache.redis.setex "#{@namespace}:bar", 120, 1
+      redis_backend { |r| r.setex "#{@namespace}:bar", 120, 1 }
       @cache.decrement "bar", 1, expires_in: 60
-      assert @cache.redis.ttl("#{@namespace}:bar") > 60
+      redis_backend do |r|
+        assert r.ttl("#{@namespace}:bar") > 60
+      end
 
       # key exist but not have expire
-      @cache.redis.set "#{@namespace}:dar", 10
-      @cache.decrement "dar", 1, expires_in: 60
-      assert @cache.redis.ttl("#{@namespace}:dar") > 0
+      redis_backend(@cache_no_ttl) { |r| r.set "#{@namespace}:dar", 10 }
+      @cache_no_ttl.decrement "dar", 1, expires_in: 60
+      redis_backend(@cache_no_ttl) do |r|
+        assert r.ttl("#{@namespace}:dar") > 0
+      end
     end
 
     test "fetch caches nil" do
@@ -222,49 +288,17 @@ module ActiveSupport::Cache::RedisCacheStoreTests
       end
     end
 
-    def test_large_string_with_default_compression_settings
-      assert_compressed(LARGE_STRING)
-    end
-
-    def test_large_object_with_default_compression_settings
-      assert_compressed(LARGE_OBJECT)
+    def redis_backend(cache = @cache)
+      cache.redis.with do |r|
+        yield r if block_given?
+        return r
+      end
     end
   end
 
-  class OptimizedRedisCacheStoreCommonBehaviorTest < RedisCacheStoreCommonBehaviorTest
-    def before_setup
-      @previous_format = ActiveSupport::Cache.format_version
-      ActiveSupport::Cache.format_version = 7.0
-      super
-    end
-
-    def test_forward_compatibility
-      previous_format = ActiveSupport::Cache.format_version
-      ActiveSupport::Cache.format_version = 6.1
-      @old_store = lookup_store
-      ActiveSupport::Cache.format_version = previous_format
-
-      key = SecureRandom.uuid
-      value = SecureRandom.alphanumeric
-      @old_store.write(key, value)
-      assert_equal value, @cache.read(key)
-    end
-
-    def test_backward_compatibility
-      previous_format = ActiveSupport::Cache.format_version
-      ActiveSupport::Cache.format_version = 6.1
-      @old_store = lookup_store
-      ActiveSupport::Cache.format_version = previous_format
-
-      key = SecureRandom.uuid
-      value = SecureRandom.alphanumeric
-      @cache.write(key, value)
-      assert_equal value, @old_store.read(key)
-    end
-
-    def after_teardown
-      super
-      ActiveSupport::Cache.format_version = @previous_format
+  class RedisCacheStoreWithDistributedRedisTest < RedisCacheStoreCommonBehaviorTest
+    def lookup_store(options = {})
+      super(options.merge(pool: { size: 5 }, url: [ENV["REDIS_URL"] || "redis://localhost:6379/0"] * 2))
     end
   end
 

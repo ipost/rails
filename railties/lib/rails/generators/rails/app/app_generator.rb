@@ -21,8 +21,8 @@ module Rails
         RUBY
       end
 
-      def method_missing(meth, *args, &block)
-        @generator.send(meth, *args, &block)
+      def method_missing(...)
+        @generator.send(...)
       end
   end
 
@@ -277,8 +277,8 @@ module Rails
       class_option :version, type: :boolean, aliases: "-v", group: :rails, desc: "Show Rails version number and quit"
       class_option :api, type: :boolean, desc: "Preconfigure smaller stack for API only apps"
       class_option :minimal, type: :boolean, desc: "Preconfigure a minimal rails app"
-      class_option :javascript, type: :string, aliases: ["-j", "--js"], default: "importmap", desc: "Choose JavaScript approach [options: importmap (default), webpack, esbuild, rollup]"
-      class_option :css, type: :string, aliases: "-c", desc: "Choose CSS processor [options: tailwind, bootstrap, bulma, postcss, sass] check https://github.com/rails/cssbundling-rails for more options"
+      class_option :javascript, type: :string, aliases: ["-j", "--js"], default: "importmap", enum: JAVASCRIPT_OPTIONS, desc: "Choose JavaScript approach"
+      class_option :css, type: :string, aliases: "-c", enum: CSS_OPTIONS, desc: "Choose CSS processor. Check https://github.com/rails/cssbundling-rails for more options"
       class_option :skip_bundle, type: :boolean, aliases: "-B", default: nil, desc: "Don't run bundle install"
       class_option :skip_decrypted_diffs, type: :boolean, default: nil, desc: "Don't configure git to show decrypted diffs of encrypted credentials"
 
@@ -309,14 +309,18 @@ module Rails
 
       META_OPTIONS = [:minimal] # :nodoc:
 
+      def self.apply_rails_template(template, destination) # :nodoc:
+        generator = new([destination], { template: template }, { destination_root: destination })
+        generator.set_default_accessors!
+        generator.apply_rails_template
+        generator.run_bundle
+        generator.run_after_bundle_callbacks
+      end
+
       def initialize(*args)
         super
 
         imply_options(OPTION_IMPLICATIONS, meta_options: META_OPTIONS)
-
-        if !options[:skip_active_record] && !DATABASES.include?(options[:database])
-          raise Error, "Invalid value for --database option. Supported preconfigurations are: #{DATABASES.join(", ")}."
-        end
 
         @after_bundle_callbacks = []
       end
@@ -537,7 +541,8 @@ module Rails
         build(:leftovers)
       end
 
-      public_task :apply_rails_template, :run_bundle
+      public_task :apply_rails_template
+      public_task :run_bundle
       public_task :generate_bundler_binstub
       public_task :run_javascript
       public_task :run_hotwire

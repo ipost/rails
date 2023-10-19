@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 module ActiveSupport
+  # = Backtrace Cleaner
+  #
   # Backtraces often include many lines that are not relevant for the context
   # under review. This makes it hard to find the signal amongst the backtrace
   # noise, and adds debugging time. With a BacktraceCleaner, filters and
@@ -19,7 +21,7 @@ module ActiveSupport
   #   bc.add_silencer { |line| /puma|rubygems/.match?(line) } # skip any lines from puma or rubygems
   #   bc.clean(exception.backtrace) # perform the cleanup
   #
-  # To reconfigure an existing BacktraceCleaner (like the default one in Rails)
+  # To reconfigure an existing BacktraceCleaner (like the default one in \Rails)
   # and show as much data as possible, you can always call
   # BacktraceCleaner#remove_silencers!, which will restore the
   # backtrace to a pristine state. If you need to reconfigure an existing
@@ -51,6 +53,24 @@ module ActiveSupport
       end
     end
     alias :filter :clean
+
+    # Returns the frame with all filters applied.
+    # returns +nil+ if the frame was silenced.
+    def clean_frame(frame, kind = :silent)
+      frame = frame.to_s
+      @filters.each do |f|
+        frame = f.call(frame.to_s)
+      end
+
+      case kind
+      when :silent
+        frame unless @silencers.any? { |s| s.call(frame) }
+      when :noise
+        frame if @silencers.any? { |s| s.call(frame) }
+      else
+        frame
+      end
+    end
 
     # Adds a filter from the block provided. Each line in the backtrace will be
     # mapped against this filter.

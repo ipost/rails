@@ -726,6 +726,31 @@ module Arel
         end
       end
 
+      describe "Table" do
+        it "should compile node names" do
+          test = Table.new(:users).alias("zomgusers")[:id].eq "3"
+          _(compile(test)).must_be_like %{
+            "zomgusers"."id" = '3'
+          }
+        end
+
+        it "should compile literal SQL"  do
+          test = Table.new Arel.sql("generate_series(4, 2)")
+          _(compile(test)).must_be_like %{ generate_series(4, 2) }
+        end
+
+        it "should compile Arel nodes"  do
+          test = Arel::Nodes::NamedFunction.new("generate_series", [4, 2])
+          _(compile(test)).must_be_like %{ generate_series(4, 2) }
+        end
+
+        it "should compile nodes with bind params" do
+          bp = Nodes::BindParam.new(1)
+          test = Arel::Nodes::NamedFunction.new("generate_series", [4, bp])
+          _(compile(test)).must_be_like %{ generate_series(4, ?) }
+        end
+      end
+
       describe "TableAlias" do
         it "should use the underlying table for checking columns" do
           test = Table.new(:users).alias("zomgusers")[:id].eq "3"
@@ -837,6 +862,19 @@ module Arel
             WITH expr1 AS (SELECT * FROM "bar"), expr2 AS (SELECT * FROM "baz") SELECT * FROM expr2
           }
         end
+
+        it "handles Cte nodes" do
+          cte = Arel::Nodes::Cte.new("expr1", Table.new(:bar).project(Arel.star))
+          manager = Table.new(:foo).
+            project(Arel.star).
+            with(cte).
+            from(cte.to_table).
+            where(cte.to_table[:score].gt(5))
+
+          _(compile(manager.ast)).must_be_like %{
+            WITH "expr1" AS (SELECT * FROM "bar") SELECT * FROM "expr1" WHERE "expr1"."score" > 5
+          }
+        end
       end
 
       describe "Nodes::WithRecursive" do
@@ -847,6 +885,32 @@ module Arel
 
           _(compile(manager.ast)).must_be_like %{
             WITH RECURSIVE expr1 AS (SELECT * FROM "bar") SELECT * FROM expr1
+          }
+        end
+      end
+
+      describe "Nodes::Cte" do
+        it "handles CTEs with no MATERIALIZED modifier" do
+          cte = Nodes::Cte.new("foo", Table.new(:bar).project(Arel.star))
+
+          _(compile(cte)).must_be_like %{
+            "foo" AS (SELECT * FROM "bar")
+          }
+        end
+
+        it "handles CTEs with a MATERIALIZED modifier" do
+          cte = Nodes::Cte.new("foo", Table.new(:bar).project(Arel.star), materialized: true)
+
+          _(compile(cte)).must_be_like %{
+            "foo" AS MATERIALIZED (SELECT * FROM "bar")
+          }
+        end
+
+        it "handles CTEs with a NOT MATERIALIZED modifier" do
+          cte = Nodes::Cte.new("foo", Table.new(:bar).project(Arel.star), materialized: false)
+
+          _(compile(cte)).must_be_like %{
+            "foo" AS NOT MATERIALIZED (SELECT * FROM "bar")
           }
         end
       end

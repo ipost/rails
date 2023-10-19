@@ -53,7 +53,7 @@ module ActiveRecord
       patterns_to_match.each do |pattern|
         failed_patterns << pattern unless SQLCounter.log_all.any? { |sql| pattern === sql }
       end
-      assert failed_patterns.empty?, "Query pattern(s) #{failed_patterns.map(&:inspect).join(', ')} not found.#{SQLCounter.log.size == 0 ? '' : "\nQueries:\n#{SQLCounter.log.join("\n")}"}"
+      assert_predicate failed_patterns, :empty?, "Query pattern(s) #{failed_patterns.map(&:inspect).join(', ')} not found.#{SQLCounter.log.size == 0 ? '' : "\nQueries:\n#{SQLCounter.log.join("\n")}"}"
     end
 
     def assert_queries(num = 1, options = {}, &block)
@@ -235,7 +235,10 @@ module ActiveRecord
       handler = ActiveRecord::Base.connection_handler
       handler.instance_variable_get(:@connection_name_to_pool_manager).each do |owner, pool_manager|
         pool_manager.role_names.each do |role_name|
-          next if role_name == ActiveRecord::Base.default_role
+          next if role_name == ActiveRecord::Base.default_role &&
+                  # TODO: Remove this helper when `remove_connection` for different shards is fixed.
+                  # See https://github.com/rails/rails/pull/49382.
+                  ["ActiveRecord::Base", "ARUnit2Model", "Contact", "ContactSti"].include?(owner)
           pool_manager.remove_role(role_name)
         end
       end
@@ -255,7 +258,7 @@ module ActiveRecord
 
   class AbstractMysqlTestCase < TestCase
     def self.run(*args)
-      super if current_adapter?(:Mysql2Adapter)
+      super if current_adapter?(:Mysql2Adapter) || current_adapter?(:TrilogyAdapter)
     end
   end
 
@@ -264,6 +267,13 @@ module ActiveRecord
       super if current_adapter?(:Mysql2Adapter)
     end
   end
+
+  class TrilogyTestCase < TestCase
+    def self.run(*args)
+      super if current_adapter?(:TrilogyAdapter)
+    end
+  end
+
 
   class SQLite3TestCase < TestCase
     def self.run(*args)

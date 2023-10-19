@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module AbstractController
-  # = Abstract Controller Callbacks
+  # = Abstract Controller \Callbacks
   #
   # Abstract Controller provides hooks during the life cycle of a controller action.
   # Callbacks allow you to trigger logic during this cycle. Available callbacks are:
@@ -56,7 +56,7 @@ module AbstractController
 
               Raising for missing callback actions is a new default in Rails 7.1, if you'd
               like to turn this off you can delete the option from the environment configurations
-              or set `config.action_pack.raise_on_missing_callback_actions` to `false`.
+              or set `config.action_controller.raise_on_missing_callback_actions` to `false`.
             MSG
 
             raise ActionNotFound.new(message, controller, missing_action)

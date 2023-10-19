@@ -8,7 +8,7 @@ gemfile(true) do
   git_source(:github) { |repo| "https://github.com/#{repo}.git" }
 
   # Activate the gem you are reporting the issue against.
-  gem "rails", "~> 7.0.0"
+  gem "rails", "~> 7.1.0"
 end
 
 require "rack/test"
@@ -18,7 +18,7 @@ class TestApp < Rails::Application
   config.root = __dir__
   config.hosts << "example.org"
   config.session_store :cookie_store, key: "cookie_store_key"
-  secrets.secret_key_base = "secret_key_base"
+  config.secret_key_base = "secret_key_base"
 
   config.logger = Logger.new($stdout)
   Rails.logger  = config.logger

@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "mutex_m"
 require "active_support/core_ext/enumerable"
 
 module ActiveRecord
@@ -24,7 +23,7 @@ module ActiveRecord
     RESTRICTED_CLASS_METHODS = %w(private public protected allocate new name parent superclass)
 
     class GeneratedAttributeMethods < Module # :nodoc:
-      include Mutex_m
+      LOCK = Monitor.new
     end
 
     class << self
@@ -44,9 +43,81 @@ module ActiveRecord
         @generated_attribute_methods = const_set(:GeneratedAttributeMethods, GeneratedAttributeMethods.new)
         private_constant :GeneratedAttributeMethods
         @attribute_methods_generated = false
+        @alias_attributes_mass_generated = false
         include @generated_attribute_methods
 
         super
+      end
+
+      def alias_attribute(new_name, old_name)
+        super
+
+        if @alias_attributes_mass_generated
+          ActiveSupport::CodeGenerator.batch(generated_attribute_methods, __FILE__, __LINE__) do |code_generator|
+            generate_alias_attribute_methods(code_generator, new_name, old_name)
+          end
+        end
+      end
+
+      def eagerly_generate_alias_attribute_methods(_new_name, _old_name) # :nodoc:
+        # alias attributes in Active Record are lazily generated
+      end
+
+      def generate_alias_attributes # :nodoc:
+        superclass.generate_alias_attributes unless superclass == Base
+        return if @alias_attributes_mass_generated
+
+        GeneratedAttributeMethods::LOCK.synchronize do
+          return if @alias_attributes_mass_generated
+          ActiveSupport::CodeGenerator.batch(generated_attribute_methods, __FILE__, __LINE__) do |code_generator|
+            aliases_by_attribute_name.each do |old_name, new_names|
+              new_names.each do |new_name|
+                generate_alias_attribute_methods(code_generator, new_name, old_name)
+              end
+            end
+          end
+
+          @alias_attributes_mass_generated = true
+        end
+      end
+
+      def alias_attribute_method_definition(code_generator, pattern, new_name, old_name)
+        method_name = pattern.method_name(new_name).to_s
+        target_name = pattern.method_name(old_name).to_s
+        parameters = pattern.parameters
+        old_name = old_name.to_s
+
+        method_defined = method_defined?(target_name) || private_method_defined?(target_name)
+        manually_defined = method_defined &&
+          !self.instance_method(target_name).owner.is_a?(GeneratedAttributeMethods)
+        reserved_method_name = ::ActiveRecord::AttributeMethods.dangerous_attribute_methods.include?(target_name)
+
+        if !abstract_class? && !has_attribute?(old_name)
+          # We only need to issue this deprecation warning once, so we issue it when defining the original reader method.
+          should_warn = target_name == old_name
+          if should_warn
+            ActiveRecord.deprecator.warn(
+              "#{self} model aliases `#{old_name}`, but `#{old_name}` is not an attribute. " \
+              "Starting in Rails 7.2, alias_attribute with non-attribute targets will raise. " \
+              "Use `alias_method :#{new_name}, :#{old_name}` or define the method manually."
+            )
+          end
+          super
+        elsif manually_defined && !reserved_method_name
+          aliased_method_redefined_as_well = method_defined_within?(method_name, self)
+          return if aliased_method_redefined_as_well
+
+          ActiveRecord.deprecator.warn(
+            "#{self} model aliases `#{old_name}` and has a method called `#{target_name}` defined. " \
+            "Starting in Rails 7.2 `#{method_name}` will not be calling `#{target_name}` anymore. " \
+            "You may want to additionally define `#{method_name}` to preserve the current behavior."
+          )
+          super
+        else
+          define_proxy_call(code_generator, method_name, pattern.proxy_target, parameters, old_name,
+            namespace: :proxy_alias_attribute
+          )
+        end
       end
 
       # Generates all the attribute related methods for columns in the database
@@ -55,7 +126,7 @@ module ActiveRecord
         return false if @attribute_methods_generated
         # Use a mutex; we don't want two threads simultaneously trying to define
         # attribute methods.
-        generated_attribute_methods.synchronize do
+        GeneratedAttributeMethods::LOCK.synchronize do
           return false if @attribute_methods_generated
           superclass.define_attribute_methods unless base_class?
           super(attribute_names)
@@ -64,9 +135,10 @@ module ActiveRecord
       end
 
       def undefine_attribute_methods # :nodoc:
-        generated_attribute_methods.synchronize do
+        GeneratedAttributeMethods::LOCK.synchronize do
           super if defined?(@attribute_methods_generated) && @attribute_methods_generated
           @attribute_methods_generated = false
+          @alias_attributes_mass_generated = false
         end
       end
 
@@ -188,6 +260,7 @@ module ActiveRecord
           super
           child_class.initialize_generated_modules
           child_class.class_eval do
+            @alias_attributes_mass_generated = false
             @attribute_names = nil
           end
         end

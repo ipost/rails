@@ -2,6 +2,7 @@
 
 require "abstract_unit"
 require "rails/engine"
+require "capybara/minitest"
 
 module ActionView
   module ATestHelper
@@ -352,6 +353,94 @@ module ActionView
     end
   end
 
+  class PlaceholderAssertionsTest < ActionView::TestCase
+    helper_method def render_from_helper
+      content_tag "a", "foo", href: "/bar"
+    end
+
+    test "supports placeholders in assert_select calls" do
+      render(partial: "test/from_helper")
+
+      assert_select "a[href=?]", "/bar", text: "foo"
+    end
+  end
+
+  class CapybaraHTMLEncoderTest < ActionView::TestCase
+    include ::Capybara::Minitest::Assertions
+
+    def page
+      Capybara.string(document_root_element)
+    end
+
+    test "document_root_element can be configured to utilize Capybara" do
+      developer = DeveloperStruct.new("Eloy")
+
+      render "developers/developer_with_h1", developer: developer
+
+      assert_kind_of Capybara::Node::Simple, page
+      assert_css "h1", text: developer.name
+    end
+  end
+
+  class RenderedMethodMissingTest < ActionView::TestCase
+    test "rendered delegates methods to the String" do
+      developer = DeveloperStruct.new("Eloy")
+
+      render "developers/developer", developer: developer
+
+      assert_kind_of String, rendered.to_s
+      assert_equal developer.name, rendered
+      assert_match rendered, /#{developer.name}/
+      assert_includes rendered, developer.name
+    end
+  end
+
+  class HTMLParserTest < ActionView::TestCase
+    test "rendered.html is a Nokogiri::XML::Element" do
+      developer = DeveloperStruct.new("Eloy")
+
+      render "developers/developer", developer: developer
+
+      assert_kind_of Nokogiri::XML::Element, rendered.html
+      assert_equal developer.name, document_root_element.text
+    end
+
+    test "do not memoize the rendered.html in view tests" do
+      concat form_tag("/foo")
+
+      assert_equal "/foo", document_root_element.at("form")["action"]
+
+      concat content_tag(:b, "Strong", class: "foo")
+
+      assert_equal "/foo", document_root_element.at("form")["action"]
+      assert_equal "foo", document_root_element.at("b")["class"]
+    end
+  end
+
+  class JSONParserTest < ActionView::TestCase
+    test "rendered.json is an ActiveSupport::HashWithIndifferentAccess" do
+      developer = DeveloperStruct.new("Eloy")
+
+      render formats: :json, partial: "developers/developer", locals: { developer: developer }
+
+      assert_kind_of ActiveSupport::HashWithIndifferentAccess, rendered.json
+      assert_equal developer.name, rendered.json[:name]
+    end
+  end
+
+  class MissingHTMLParserTest < ActionView::TestCase
+    register_parser :html, nil
+
+    test "rendered.html falls back to returning the value when the parser is missing" do
+      developer = DeveloperStruct.new("Eloy")
+
+      render "developers/developer", developer: developer
+
+      assert_kind_of String, rendered.html
+      assert_equal developer.name, rendered.html
+    end
+  end
+
   module AHelperWithInitialize
     def initialize(*)
       super
@@ -364,4 +453,8 @@ module ActionView
       assert @called_initialize
     end
   end
+end
+
+if RUBY_VERSION >= "3.1"
+  require_relative "./test_case_test/pattern_matching_test_cases"
 end

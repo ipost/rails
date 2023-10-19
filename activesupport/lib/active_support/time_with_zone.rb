@@ -8,6 +8,8 @@ require "active_support/core_ext/object/acts_like"
 require "active_support/core_ext/date_and_time/compatibility"
 
 module ActiveSupport
+  # = Active Support \Time With Zone
+  #
   # A Time-like class that can represent a time in any time zone. Necessary
   # because standard Ruby Time instances are limited to UTC and the
   # system's <tt>ENV['TZ']</tt> zone.
@@ -66,7 +68,7 @@ module ActiveSupport
     alias_method :getutc, :utc
     alias_method :gmtime, :utc
 
-    # Returns the underlying <tt>TZInfo::TimezonePeriod</tt>.
+    # Returns the underlying +TZInfo::TimezonePeriod+.
     def period
       @period ||= time_zone.period_for_utc(@utc)
     end
@@ -206,7 +208,7 @@ module ActiveSupport
     # Accepts an optional <tt>format</tt>:
     # * <tt>:default</tt> - default value, mimics Ruby Time#to_s format.
     # * <tt>:db</tt> - format outputs time in UTC :db time. See Time#to_fs(:db).
-    # * Any key in <tt>Time::DATE_FORMATS</tt> can be used. See active_support/core_ext/time/conversions.rb.
+    # * Any key in +Time::DATE_FORMATS+ can be used. See active_support/core_ext/time/conversions.rb.
     def to_fs(format = :default)
       if format == :db
         utc.to_fs(format)

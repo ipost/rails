@@ -10,8 +10,6 @@ module ActiveRecord
     class NonExistentTable < ActiveRecord::Base
     end
 
-    fixtures :comments
-
     def setup
       super
       @subscriber = SQLSubscriber.new
@@ -57,6 +55,8 @@ module ActiveRecord
       # Verify the connection param has been applied.
       expect = NonExistentTable.connection.query("show geqo").first.first
       assert_equal "off", expect
+    ensure
+      NonExistentTable.remove_connection
     end
 
     def test_reset
@@ -152,7 +152,7 @@ module ActiveRecord
       run_without_connection do |orig_connection|
         ActiveRecord::Base.establish_connection(orig_connection.deep_merge(variables: { debug_print_plan: true }))
         set_true = ActiveRecord::Base.connection.exec_query "SHOW DEBUG_PRINT_PLAN"
-        assert_equal set_true.rows, [["on"]]
+        assert_equal [["on"]], set_true.rows
       end
     end
 
@@ -160,7 +160,7 @@ module ActiveRecord
       run_without_connection do |orig_connection|
         ActiveRecord::Base.establish_connection(orig_connection.deep_merge(variables: { debug_print_plan: false }))
         set_false = ActiveRecord::Base.connection.exec_query "SHOW DEBUG_PRINT_PLAN"
-        assert_equal set_false.rows, [["off"]]
+        assert_equal [["off"]], set_false.rows
       end
     end
 
@@ -213,7 +213,7 @@ module ActiveRecord
       fake_lock_id = 2940075057017742022
       with_warning_suppression do
         released_non_existent_lock = @connection.release_advisory_lock(fake_lock_id)
-        assert_equal released_non_existent_lock, false,
+        assert_equal false, released_non_existent_lock,
           "expected release_advisory_lock to return false when there was no lock to release"
       end
     end

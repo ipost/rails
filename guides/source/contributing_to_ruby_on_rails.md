@@ -138,6 +138,7 @@ learn about Ruby on Rails, and the API, which serves as a reference.
 You can help improve the Rails guides or the API reference by making them more coherent, consistent, or readable, adding missing information, correcting factual errors, fixing typos, or bringing them up to date with the latest edge Rails.
 
 To do so, make changes to Rails guides source files (located [here](https://github.com/rails/rails/tree/main/guides/source) on GitHub) or RDoc comments in source code. Then open a pull request to apply your changes to the main branch.
+Use `[ci skip]` in your pull request title to avoid running the CI build for documentation changes.
 
 When working with documentation, please take into account the [API Documentation Guidelines](api_documentation_guidelines.html) and the [Ruby on Rails Guides Guidelines](ruby_on_rails_guides_guidelines.html).
 
@@ -195,6 +196,17 @@ If you're a member of an organization that has codespaces enabled, you can fork 
 #### Using VS Code Remote Containers
 
 If you have [Visual Studio Code](https://code.visualstudio.com) and [Docker](https://www.docker.com) installed, you can use the [VS Code remote containers plugin](https://code.visualstudio.com/docs/remote/containers-tutorial). The plugin will read the [`.devcontainer`](https://github.com/rails/rails/tree/main/.devcontainer) configuration in the repository and build the Docker container locally.
+
+#### Using Dev Container CLI
+
+Alternatively, with [Docker](https://www.docker.com) and [npm](https://github.com/npm/cli) installed, you can run [Dev Container CLI](https://github.com/devcontainers/cli) to utilize the [`.devcontainer`](https://github.com/rails/rails/tree/main/.devcontainer) configuration from the command line.
+
+```bash
+$ npm install -g @devcontainers/cli
+$ cd rails
+$ devcontainer up --workspace-folder .
+$ devcontainer exec --workspace-folder . bash
+```
 
 #### Using rails-dev-box
 
@@ -294,21 +306,7 @@ For `rails-ujs` CoffeeScript and JavaScript files, you can run `npm run lint` in
 
 #### Spell Checking
 
-We are running [misspell](https://github.com/client9/misspell) which is mainly written in
-[Golang](https://golang.org/) to check spelling with [GitHub Actions](https://github.com/rails/rails/blob/main/.github/workflows/lint.yml). Correct
-commonly misspelled English words quickly with `misspell`. `misspell` is different from most other spell checkers
-because it doesn't use a custom dictionary. You can run `misspell` locally against all files with:
-
-```bash
-$ find . -type f | xargs ./misspell -i 'aircrafts,devels,invertions' -error
-```
-
-Notable `misspell` help options or flags are:
-
-- `-i` string: ignore the following corrections, comma separated
-- `-w`: Overwrite file with corrections (default is just to display)
-
-We also run [codespell](https://github.com/codespell-project/codespell) with GitHub Actions to check spelling and
+We run [codespell](https://github.com/codespell-project/codespell) with GitHub Actions to check spelling and
 [codespell](https://pypi.org/project/codespell/) runs against a [small custom dictionary](https://github.com/rails/rails/blob/main/codespell.txt).
 `codespell` is written in [Python](https://www.python.org/) and you can run it with:
 
@@ -396,6 +394,15 @@ $ cd actionmailer
 $ bin/test test/mail_layout_test.rb -n test_explicit_class_layout
 ```
 
+#### For a Specific Line
+
+Figuring out the name is not always easy, but if you know the line number your test starts at, this option is for you:
+
+```bash
+$ cd railties
+$ bin/test test/application/asset_debugging_test.rb:69
+```
+
 #### Running Tests with a Specific Seed
 
 Test execution is randomized with a randomization seed. If you are experiencing random
@@ -458,6 +465,7 @@ You can now run the tests as you did for `sqlite3`. The tasks are respectively:
 
 ```bash
 $ bundle exec rake test:mysql2
+$ bundle exec rake test:trilogy
 $ bundle exec rake test:postgresql
 ```
 
@@ -487,6 +495,12 @@ You can invoke `test_jdbcmysql`, `test_jdbcsqlite3` or `test_jdbcpostgresql` als
 
 To use an external debugger (pry, byebug, etc), install the debugger and use it as normal.  If debugger issues occur, run tests in serial by setting `PARALLEL_WORKERS=1` or run a single test with `-n test_long_test_name`.
 
+If running tests against generators you will need to set `RAILS_LOG_TO_STDOUT=true` in order for debugging tools to work.
+
+```sh
+RAILS_LOG_TO_STDOUT=true ./bin/test test/generators/actions_test.rb
+```
+
 ### Warnings
 
 The test suite runs with warnings enabled. Ideally, Ruby on Rails should issue no warnings, but there may be a few, as well as some from third-party libraries. Please ignore (or fix!) them, if any, and submit patches that do not issue new warnings.
@@ -509,7 +523,7 @@ You should add an entry **to the top** of the CHANGELOG of the framework you mod
 
 A CHANGELOG entry should summarize what was changed and should end with the author's name. You can use multiple lines if you need more space, and you can attach code examples indented with 4 spaces. If a change is related to a specific issue, you should attach the issue's number. Here is an example CHANGELOG entry:
 
-```
+```markdown
 *   Summary of a change that briefly describes what was changed. You can use multiple
     lines and wrap them at around 80 characters. Code examples are ok, too, if needed:
 
@@ -592,11 +606,11 @@ To set the new framework default, set the new value in
 def load_defaults(target_version)
   case target_version.to_s
   when "7.1"
-    ...
+    # ...
     if respond_to?(:active_job)
       active_job.existing_behavior = false
     end
-    ...
+    # ...
   end
 end
 ```
@@ -606,7 +620,7 @@ To ease the upgrade it's required to add the new default to the
 value:
 
 ```ruby
-# new_framework_defaults_7_1.rb.tt
+# new_framework_defaults_7_2.rb.tt
 
 # Rails.application.config.active_job.existing_behavior = false
 ```
@@ -647,7 +661,7 @@ understanding why the change was made, so please take the time to write it.
 
 A good commit message looks like this:
 
-```
+```markdown
 Short summary (ideally 50 characters or less)
 
 More detailed description, if necessary. Each line should wrap at

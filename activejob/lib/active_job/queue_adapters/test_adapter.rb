@@ -6,7 +6,7 @@ module ActiveJob
     #
     # The test adapter should be used only in testing. Along with
     # ActiveJob::TestCase and ActiveJob::TestHelper
-    # it makes a great tool to test your Rails application.
+    # it makes a great tool to test your \Rails application.
     #
     # To use the test adapter set +queue_adapter+ config to +:test+.
     #
@@ -59,7 +59,7 @@ module ActiveJob
         end
 
         def filtered_time?(job)
-          job.scheduled_at > at.to_f if at && job.scheduled_at
+          job.scheduled_at > at if at && job.scheduled_at
         end
 
         def filtered_queue?(job)

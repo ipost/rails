@@ -72,7 +72,7 @@ module ActionDispatch
 
     PASS_NOT_FOUND = Class.new { # :nodoc:
       def self.action(_); self; end
-      def self.call(_); [404, { "X-Cascade" => "pass" }, []]; end
+      def self.call(_); [404, { Constants::X_CASCADE => "pass" }, []]; end
       def self.action_encoding_template(action); false; end
     }
 
@@ -191,13 +191,6 @@ module ActionDispatch
       get_header "action_dispatch.http_auth_salt"
     end
 
-    def show_exceptions? # :nodoc:
-      # We're treating `nil` as "unset", and we want the default setting to be
-      # `true`. This logic should be extracted to `env_config` and calculated
-      # once.
-      !(get_header("action_dispatch.show_exceptions") == false)
-    end
-
     # Returns a symbol form of the #request_method.
     def request_method_symbol
       HTTP_METHOD_LOOKUP[request_method]
@@ -245,9 +238,7 @@ module ActionDispatch
     # If you are using +javascript_include_tag+ or +stylesheet_link_tag+ the
     # Early Hints headers are included by default if supported.
     def send_early_hints(links)
-      return unless env["rack.early_hints"]
-
-      env["rack.early_hints"].call(links)
+      env["rack.early_hints"]&.call(links)
     end
 
     # Returns a +String+ with the last requested path including their params.
@@ -463,7 +454,7 @@ module ActionDispatch
     private
       def check_method(name)
         if name
-          HTTP_METHOD_LOOKUP[name] || raise(ActionController::UnknownHttpMethod, "#{name}, accepted HTTP methods are #{HTTP_METHODS[0...-1].join(', ')}, and #{HTTP_METHODS[-1]}")
+          HTTP_METHOD_LOOKUP[name] || raise(ActionController::UnknownHttpMethod, "#{name}, accepted HTTP methods are #{HTTP_METHODS.to_sentence(locale: false)}")
         end
 
         name

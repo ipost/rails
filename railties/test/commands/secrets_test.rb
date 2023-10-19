@@ -10,37 +10,22 @@ class Rails::Command::SecretsTest < ActiveSupport::TestCase
   setup :build_app
   teardown :teardown_app
 
-  test "edit without editor gives hint" do
-    assert_match "No $EDITOR to open file in", run_edit_command(editor: "")
+  test "edit without visual or editor gives hint" do
+    assert_match "No $VISUAL or $EDITOR to open file in", run_edit_command(visual: "", editor: "")
   end
 
-  test "encrypted secrets are deprecated when using credentials" do
-    assert_match "Encrypted secrets is deprecated", run_setup_command
-    assert_equal 1, $?.exitstatus
-    assert_not File.exist?("config/secrets.yml.enc")
+  test "edit with visual but not editor does not give hint" do
+    assert_no_match "No $VISUAL or $EDITOR to open file in", run_edit_command(visual: "cat", editor: "")
   end
 
-  test "encrypted secrets are deprecated when running edit without setup" do
-    assert_match "Encrypted secrets is deprecated", run_setup_command
-    assert_equal 1, $?.exitstatus
-    assert_not File.exist?("config/secrets.yml.enc")
-  end
-
-  test "encrypted secrets are deprecated for 5.1 config/secrets.yml apps" do
-    Dir.chdir(app_path) do
-      FileUtils.rm("config/credentials.yml.enc")
-      FileUtils.touch("config/secrets.yml")
-
-      assert_match "Encrypted secrets is deprecated", run_setup_command
-      assert_equal 1, $?.exitstatus
-      assert_not File.exist?("config/secrets.yml.enc")
-    end
+  test "edit with editor but not visual does not give hint" do
+    assert_no_match "No $VISUAL or $EDITOR to open file in", run_edit_command(visual: "", editor: "cat")
   end
 
   test "edit secrets" do
     # Use expected default MessageEncryptor serializer for Rails < 7.1 to be compatible with hardcoded secrets.yml.enc
     add_to_config <<-RUBY
-      config.active_support.default_message_encryptor_serializer = :marshal
+      config.active_support.message_serializer = :marshal
     RUBY
 
     require "#{app_path}/config/environment"
@@ -67,17 +52,15 @@ class Rails::Command::SecretsTest < ActiveSupport::TestCase
       end
     end
 
-    def run_edit_command(editor: "cat")
-      switch_env("EDITOR", editor) do
-        rails "secrets:edit", allow_failure: true
+    def run_edit_command(visual: "cat", editor: "cat")
+      switch_env("VISUAL", visual) do
+        switch_env("EDITOR", editor) do
+          rails "secrets:edit", allow_failure: true
+        end
       end
     end
 
     def run_show_command
       rails "secrets:show", allow_failure: true
-    end
-
-    def run_setup_command
-      rails "secrets:setup", allow_failure: true
     end
 end

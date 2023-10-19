@@ -16,7 +16,7 @@ module Rails
       require_relative "credentials_command/merging"
       include Merging
 
-      desc "edit", "Open the decrypted credentials in `$EDITOR` for editing"
+      desc "edit", "Open the decrypted credentials in `$VISUAL` or `$EDITOR` for editing"
       def edit
         load_environment_config!
         load_generators

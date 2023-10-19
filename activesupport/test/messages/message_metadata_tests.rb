@@ -3,6 +3,7 @@
 require "active_support/json"
 require "active_support/time"
 require "active_support/messages/metadata"
+require "active_support/message_pack"
 
 module MessageMetadataTests
   extend ActiveSupport::Concern
@@ -118,7 +119,7 @@ module MessageMetadataTests
       Marshal,
       JSON,
       ActiveSupport::JSON,
-      ActiveSupport::JsonWithMarshalFallback,
+      ActiveSupport::MessagePack,
       CustomSerializer,
     ]
 

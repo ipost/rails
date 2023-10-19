@@ -55,10 +55,31 @@ module ActiveRecord
   class AdapterNotFound < ActiveRecordError
   end
 
+  # Superclass for all errors raised from an Active Record adapter.
+  class AdapterError < ActiveRecordError
+    def initialize(message = nil, connection_pool: nil)
+      @connection_pool = connection_pool
+      super(message)
+    end
+
+    attr_reader :connection_pool
+  end
+
   # Raised when connection to the database could not been established (for example when
   # {ActiveRecord::Base.connection=}[rdoc-ref:ConnectionHandling#connection]
   # is given a +nil+ object).
-  class ConnectionNotEstablished < ActiveRecordError
+  class ConnectionNotEstablished < AdapterError
+    def initialize(message = nil, connection_pool: nil)
+      super(message, connection_pool: connection_pool)
+    end
+
+    def set_pool(connection_pool)
+      unless @connection_pool
+        @connection_pool = connection_pool
+      end
+
+      self
+    end
   end
 
   # Raised when a connection could not be obtained within the connection
@@ -159,9 +180,9 @@ module ActiveRecord
   # Superclass for all database execution errors.
   #
   # Wraps the underlying database error as +cause+.
-  class StatementInvalid < ActiveRecordError
-    def initialize(message = nil, sql: nil, binds: nil)
-      super(message || $!&.message)
+  class StatementInvalid < AdapterError
+    def initialize(message = nil, sql: nil, binds: nil, connection_pool: nil)
+      super(message || $!&.message, connection_pool: connection_pool)
       @sql = sql
       @binds = binds
     end
@@ -203,7 +224,8 @@ module ActiveRecord
       target_table: nil,
       primary_key: nil,
       primary_key_column: nil,
-      query_parser: nil
+      query_parser: nil,
+      connection_pool: nil
     )
       @original_message = message
       @query_parser = query_parser
@@ -226,7 +248,7 @@ module ActiveRecord
         msg << "\nOriginal message: #{message}"
       end
 
-      super(msg, sql: sql, binds: binds)
+      super(msg, sql: sql, binds: binds, connection_pool: connection_pool)
     end
 
     def set_query(sql, binds)
@@ -235,6 +257,7 @@ module ActiveRecord
           message: @original_message,
           sql: sql,
           binds: binds,
+          connection_pool: @connection_pool,
           **@query_parser.call(sql)
         ).tap do |exception|
           exception.set_backtrace backtrace
@@ -258,12 +281,12 @@ module ActiveRecord
   end
 
   # Raised when a statement produces an SQL warning.
-  class SQLWarning < ActiveRecordError
+  class SQLWarning < AdapterError
     attr_reader :code, :level
     attr_accessor :sql
 
-    def initialize(message = nil, code = nil, level = nil, sql = nil)
-      super(message)
+    def initialize(message = nil, code = nil, level = nil, sql = nil, connection_pool = nil)
+      super(message, connection_pool: connection_pool)
       @code = code
       @level = level
       @sql = sql
@@ -288,8 +311,8 @@ module ActiveRecord
       ActiveRecord::Tasks::DatabaseTasks.create_current
     end
 
-    def initialize(message = nil)
-      super(message || "Database not found")
+    def initialize(message = nil, connection_pool: nil)
+      super(message || "Database not found", connection_pool: connection_pool)
     end
 
     class << self
@@ -453,12 +476,25 @@ module ActiveRecord
   # * You are joining an existing open transaction
   # * You are creating a nested (savepoint) transaction
   #
-  # The mysql2 and postgresql adapters support setting the transaction isolation level.
+  # The mysql2, trilogy, and postgresql adapters support setting the transaction isolation level.
   class TransactionIsolationError < ActiveRecordError
   end
 
   # TransactionRollbackError will be raised when a transaction is rolled
   # back by the database due to a serialization failure or a deadlock.
+  #
+  # These exceptions should not be generally rescued in nested transaction
+  # blocks, because they have side-effects in the actual enclosing transaction
+  # and internal Active Record state. They can be rescued if you are above the
+  # root transaction block, though.
+  #
+  # In that case, beware of transactional tests, however, because they run test
+  # cases in their own umbrella transaction. If you absolutely need to handle
+  # these exceptions in tests please consider disabling transactional tests in
+  # the affected test class (<tt>self.use_transactional_tests = false</tt>).
+  #
+  # Due to the aforementioned side-effects, this exception should not be raised
+  # manually by users.
   #
   # See the following:
   #
@@ -474,11 +510,17 @@ module ActiveRecord
 
   # SerializationFailure will be raised when a transaction is rolled
   # back by the database due to a serialization failure.
+  #
+  # This is a subclass of TransactionRollbackError, please make sure to check
+  # its documentation to be aware of its caveats.
   class SerializationFailure < TransactionRollbackError
   end
 
   # Deadlocked will be raised when a transaction is rolled
   # back by the database when a deadlock is encountered.
+  #
+  # This is a subclass of TransactionRollbackError, please make sure to check
+  # its documentation to be aware of its caveats.
   class Deadlocked < TransactionRollbackError
   end
 

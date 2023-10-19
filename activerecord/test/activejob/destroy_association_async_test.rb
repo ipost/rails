@@ -26,8 +26,6 @@ require "models/sharded/blog_post_tag"
 require "models/sharded/blog"
 
 class DestroyAssociationAsyncTest < ActiveRecord::TestCase
-  self.use_transactional_tests = false
-
   include ActiveJob::TestHelper
 
   test "destroying a record destroys the has_many :through records using a job" do
@@ -400,7 +398,7 @@ class DestroyAssociationAsyncTest < ActiveRecord::TestCase
 
     belongs.destroy
     perform_enqueued_jobs only: ActiveRecord::DestroyAssociationAsyncJob
-    assert parent.reload.deleted?
+    assert_predicate parent.reload, :deleted?
   ensure
     DlKeyedBelongsToSoftDelete.delete_all
     DestroyAsyncParentSoftDelete.delete_all

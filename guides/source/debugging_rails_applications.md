@@ -208,7 +208,7 @@ Adding extra logging like this makes it easy to search for unexpected or unusual
 
 When looking at database query output in logs, it may not be immediately clear why multiple database queries are triggered when a single method is called:
 
-```
+```irb
 irb(main):001:0> Article.pamplemousse
   Article Load (0.4ms)  SELECT "articles".* FROM "articles"
   Comment Load (0.2ms)  SELECT "comments".* FROM "comments" WHERE "comments"."article_id" = ?  [["article_id", 1]]
@@ -219,7 +219,7 @@ irb(main):001:0> Article.pamplemousse
 
 After running `ActiveRecord.verbose_query_logs = true` in the `bin/rails console` session to enable verbose query logs and running the method again, it becomes obvious what single line of code is generating all these discrete database calls:
 
-```
+```irb
 irb(main):003:0> Article.pamplemousse
   Article Load (0.2ms)  SELECT "articles".* FROM "articles"
   ↳ app/models/article.rb:5
@@ -378,7 +378,7 @@ Processing by PostsController#index as HTML
     10|   # GET /posts/1 or /posts/1.json
     11|   def show
 =>#0    PostsController#index at ~/projects/rails-guide-example/app/controllers/posts_controller.rb:7
-  #1    ActionController::BasicImplicitRender#send_action(method="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.1.0.alpha/lib/action_controller/metal/basic_implicit_render.rb:6
+  #1    ActionController::BasicImplicitRender#send_action(method="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.2.0.alpha/lib/action_controller/metal/basic_implicit_render.rb:6
   # and 72 frames (use `bt' command for all frames)
 (rdbg)
 ```
@@ -444,14 +444,14 @@ When used without any options, `backtrace` lists all the frames on the stack:
 
 ```rb
 =>#0    PostsController#index at ~/projects/rails-guide-example/app/controllers/posts_controller.rb:7
-  #1    ActionController::BasicImplicitRender#send_action(method="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.1.0.alpha/lib/action_controller/metal/basic_implicit_render.rb:6
-  #2    AbstractController::Base#process_action(method_name="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.1.0.alpha/lib/abstract_controller/base.rb:214
-  #3    ActionController::Rendering#process_action(#arg_rest=nil) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.1.0.alpha/lib/action_controller/metal/rendering.rb:53
-  #4    block in process_action at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.1.0.alpha/lib/abstract_controller/callbacks.rb:221
-  #5    block in run_callbacks at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/activesupport-7.1.0.alpha/lib/active_support/callbacks.rb:118
-  #6    ActionText::Rendering::ClassMethods#with_renderer(renderer=#<PostsController:0x0000000000af78>) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actiontext-7.1.0.alpha/lib/action_text/rendering.rb:20
-  #7    block {|controller=#<PostsController:0x0000000000af78>, action=#<Proc:0x00007fd91985f1c0 /Users/st0012/...|} in <class:Engine> (4 levels) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actiontext-7.1.0.alpha/lib/action_text/engine.rb:69
-  #8    [C] BasicObject#instance_exec at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/activesupport-7.1.0.alpha/lib/active_support/callbacks.rb:127
+  #1    ActionController::BasicImplicitRender#send_action(method="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-2.0.alpha/lib/action_controller/metal/basic_implicit_render.rb:6
+  #2    AbstractController::Base#process_action(method_name="index", args=[]) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.2.0.alpha/lib/abstract_controller/base.rb:214
+  #3    ActionController::Rendering#process_action(#arg_rest=nil) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.2.0.alpha/lib/action_controller/metal/rendering.rb:53
+  #4    block in process_action at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actionpack-7.2.0.alpha/lib/abstract_controller/callbacks.rb:221
+  #5    block in run_callbacks at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/activesupport-7.2.0.alpha/lib/active_support/callbacks.rb:118
+  #6    ActionText::Rendering::ClassMethods#with_renderer(renderer=#<PostsController:0x0000000000af78>) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actiontext-7.2.0.alpha/lib/action_text/rendering.rb:20
+  #7    block {|controller=#<PostsController:0x0000000000af78>, action=#<Proc:0x00007fd91985f1c0 /Users/st0012/...|} in <class:Engine> (4 levels) at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/actiontext-7.2.0.alpha/lib/action_text/engine.rb:69
+  #8    [C] BasicObject#instance_exec at ~/.rbenv/versions/3.0.1/lib/ruby/gems/3.0.0/gems/activesupport-7.2.0.alpha/lib/active_support/callbacks.rb:127
   ..... and more
 ```
 
@@ -505,7 +505,7 @@ instance variables:
   @_action_has_layout  @_action_name    @_config  @_lookup_context                      @_request
   @_response           @_response_body  @_routes  @marked_for_same_origin_verification  @posts
   @rendered_format
-class variables: @@raise_on_missing_translations  @@raise_on_open_redirects
+class variables: @@raise_on_open_redirects
 ```
 
 ### Breakpoints

@@ -4,6 +4,9 @@ module ActiveRecord
   module ConnectionAdapters
     module PostgreSQL
       module Quoting
+        QUOTED_COLUMN_NAMES = Concurrent::Map.new # :nodoc:
+        QUOTED_TABLE_NAMES = Concurrent::Map.new # :nodoc:
+
         class IntegerOutOf64BitRange < StandardError
           def initialize(msg)
             super(msg)
@@ -69,7 +72,7 @@ module ActiveRecord
 
         # Quotes strings for use in SQL input.
         def quote_string(s) # :nodoc:
-          with_raw_connection(allow_retry: true, uses_transaction: false) do |connection|
+          with_raw_connection(allow_retry: true, materialize_transactions: false) do |connection|
             connection.escape(s)
           end
         end
@@ -83,7 +86,7 @@ module ActiveRecord
         # - "schema.name".table_name
         # - "schema.name"."table.name"
         def quote_table_name(name) # :nodoc:
-          self.class.quoted_table_names[name] ||= Utils.extract_schema_qualified_name(name.to_s).quoted.freeze
+          QUOTED_TABLE_NAMES[name] ||= Utils.extract_schema_qualified_name(name.to_s).quoted.freeze
         end
 
         # Quotes schema names for use in SQL queries.
@@ -97,7 +100,7 @@ module ActiveRecord
 
         # Quotes column names for use in SQL queries.
         def quote_column_name(name) # :nodoc:
-          self.class.quoted_column_names[name] ||= PG::Connection.quote_ident(super).freeze
+          QUOTED_COLUMN_NAMES[name] ||= PG::Connection.quote_ident(super).freeze
         end
 
         # Quote date/time values for use in SQL input.
@@ -146,6 +149,7 @@ module ActiveRecord
         end
 
         def lookup_cast_type_from_column(column) # :nodoc:
+          verify! if type_map.nil?
           type_map.lookup(column.oid, column.fmod, column.sql_type)
         end
 

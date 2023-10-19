@@ -324,9 +324,9 @@ module ActionController
     tests TestController
 
     def assert_stream_closed
-      assert response.stream.closed?, "stream should be closed"
-      assert response.committed?,     "response should be committed"
-      assert response.sent?,          "response should be sent"
+      assert_predicate response.stream, :closed?, "stream should be closed"
+      assert_predicate response, :committed?,     "response should be committed"
+      assert_predicate response, :sent?,          "response should be sent"
     end
 
     def capture_log_output
@@ -595,6 +595,16 @@ module ActionController
       @request.if_none_match = %(W/"#{ActiveSupport::Digest.hexdigest('123')}")
       get :with_stale
       assert_equal 304, response.status.to_i
+    end
+
+    def test_response_buffer_do_not_respond_to_to_ary
+      get :basic_stream
+      # `response.to_a` wraps the response with RackBody.
+      # RackBody is the body we return to Rack.
+      # Therefore we want to assert directly on it.
+      # The Rack spec requires bodies that cannot be
+      # buffered to return false to `respond_to?(:to_ary)`
+      assert_not response.to_a.last.respond_to? :to_ary
     end
   end
 

@@ -28,7 +28,7 @@ require "models/car"
 require "models/bulb"
 require "models/pet"
 require "models/owner"
-require "models/cpk/book"
+require "models/cpk"
 require "concurrent/atomic/count_down_latch"
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/kernel/reporting"
@@ -128,7 +128,7 @@ class BasicsTest < ActiveRecord::TestCase
 
     Topic.reset_column_information
 
-    Topic.connection.stub(:lookup_cast_type_from_column, ->(_) { raise "Some Error" }) do
+    Topic.connection.stub(:schema_cache, -> { raise "Some Error" }) do
       assert_raises RuntimeError do
         Topic.columns_hash
       end
@@ -143,6 +143,7 @@ class BasicsTest < ActiveRecord::TestCase
     badchar   = {
       "SQLite3Adapter"    => '"',
       "Mysql2Adapter"     => "`",
+      "TrilogyAdapter"    => "`",
       "PostgreSQLAdapter" => '"',
       "OracleAdapter"     => '"',
     }.fetch(classname) {
@@ -624,6 +625,12 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal topic_2, topic_1
   end
 
+  def test_equality_with_blank_ids
+    one = Subscriber.new(id: "")
+    two = Subscriber.new(id: "")
+    assert_equal one, two
+  end
+
   def test_equality_of_relation_and_collection_proxy
     car = Car.create!
     car.bulbs.build
@@ -878,7 +885,7 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal "たこ焼き仮面", weird.なまえ
   end
 
-  unless current_adapter?(:PostgreSQLAdapter)
+  unless current_adapter?(:PostgreSQLAdapter) || current_adapter?(:TrilogyAdapter)
     def test_respect_internal_encoding
       old_default_internal = Encoding.default_internal
       silence_warnings { Encoding.default_internal = "EUC-JP" }
@@ -961,6 +968,14 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal false, Topic.find(1).previously_new_record?
   end
 
+  def test_previously_new_record_on_destroyed_record
+    topic = Topic.create
+    assert_predicate topic, :previously_new_record?
+
+    topic.destroy
+    assert_not_predicate topic, :previously_new_record?
+  end
+
   def test_previously_persisted_returns_boolean
     assert_equal false, Topic.new.previously_persisted?
     assert_equal false, Topic.new.destroy.previously_persisted?
@@ -1004,8 +1019,7 @@ class BasicsTest < ActiveRecord::TestCase
     new_book = book.dup
 
     assert_equal "The first book", new_book.title
-    assert_nil new_book.author_id
-    assert_nil new_book.number
+    assert_equal([nil, nil], new_book.id)
   end
 
   DeveloperSalary = Struct.new(:amount)
@@ -1071,7 +1085,7 @@ class BasicsTest < ActiveRecord::TestCase
 
   def test_clone_of_new_object_marks_as_dirty_only_changed_attributes
     developer = Developer.new name: "Bjorn"
-    assert developer.name_changed?            # obviously
+    assert_predicate developer, :name_changed?            # obviously
     assert_not developer.salary_changed?         # attribute has non-nil default value, so treated as not changed
 
     cloned_developer = developer.clone
@@ -1085,7 +1099,7 @@ class BasicsTest < ActiveRecord::TestCase
     assert_not_predicate developer, :salary_changed?
 
     cloned_developer = developer.dup
-    assert cloned_developer.name_changed?     # both attributes differ from defaults
+    assert_predicate cloned_developer, :name_changed?     # both attributes differ from defaults
     assert_predicate cloned_developer, :salary_changed?
   end
 
@@ -1095,7 +1109,7 @@ class BasicsTest < ActiveRecord::TestCase
     assert_not_predicate developer, :salary_changed?
 
     cloned_developer = developer.dup
-    assert cloned_developer.name_changed?     # ... but on cloned object should be
+    assert_predicate cloned_developer, :name_changed?     # ... but on cloned object should be
     assert_not cloned_developer.salary_changed?  # ... BUT salary has non-nil default which should be treated as not changed on cloned instance
   end
 
@@ -1112,7 +1126,7 @@ class BasicsTest < ActiveRecord::TestCase
     assert_equal company, Company.find(company.id)
   end
 
-  if current_adapter?(:PostgreSQLAdapter, :Mysql2Adapter, :SQLite3Adapter)
+  if current_adapter?(:PostgreSQLAdapter, :Mysql2Adapter, :TrilogyAdapter, :SQLite3Adapter)
     def test_default_char_types
       default = Default.new
 
@@ -1120,7 +1134,7 @@ class BasicsTest < ActiveRecord::TestCase
       assert_equal "a varchar field", default.char2
 
       # Mysql text type can't have default value
-      unless current_adapter?(:Mysql2Adapter)
+      unless current_adapter?(:Mysql2Adapter, :TrilogyAdapter)
         assert_equal "a text field", default.char3
       end
     end
@@ -1501,7 +1515,7 @@ class BasicsTest < ActiveRecord::TestCase
     marshalled = Marshal.dump(Post.new)
     post       = Marshal.load(marshalled)
 
-    assert post.new_record?, "should be a new record"
+    assert_predicate post, :new_record?, "should be a new record"
   end
 
   def test_marshalling_with_associations
@@ -1553,7 +1567,7 @@ class BasicsTest < ActiveRecord::TestCase
 
     post = Marshal.load(Marshal.dump(post))
 
-    assert post.new_record?, "should be a new record"
+    assert_predicate post, :new_record?, "should be a new record"
   end
 
   def test_attribute_names
@@ -1846,13 +1860,13 @@ class BasicsTest < ActiveRecord::TestCase
   test "#present? and #blank? on ActiveRecord::Base classes" do
     assert_not_empty Topic.all
     assert_no_queries do
-      assert Topic.present?
+      assert_predicate Topic, :present?
       assert_not Topic.blank?
     end
 
     Topic.delete_all
     assert_no_queries do
-      assert Topic.present?
+      assert_predicate Topic, :present?
       assert_not Topic.blank?
     end
   end

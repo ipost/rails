@@ -46,6 +46,8 @@ module ActiveRecord
         end
     end
 
+    # = Active Record Reflection
+    #
     # \Reflection enables the ability to examine the associations and aggregations of
     # Active Record classes and objects. This information, for example,
     # can be used in a form builder that takes an Active Record object
@@ -251,11 +253,11 @@ module ActiveRecord
       end
 
       def check_validity_of_inverse!
-        unless polymorphic?
-          if has_inverse? && inverse_of.nil?
+        if !polymorphic? && has_inverse?
+          if inverse_of.nil?
             raise InverseOfAssociationNotFoundError.new(self)
           end
-          if has_inverse? && inverse_of == self
+          if inverse_of == self
             raise InverseOfAssociationRecursiveError.new(self)
           end
         end
@@ -273,8 +275,11 @@ module ActiveRecord
       # Hence this method.
       def inverse_which_updates_counter_cache
         unless @inverse_which_updates_counter_cache_defined
-          @inverse_which_updates_counter_cache = klass.reflect_on_all_associations(:belongs_to).find do |inverse|
-            inverse.counter_cache_column == counter_cache_column
+          if counter_cache_column
+            inverse_candidates = inverse_of ? [inverse_of] : klass.reflect_on_all_associations(:belongs_to)
+            @inverse_which_updates_counter_cache = inverse_candidates.find do |inverse|
+              inverse.counter_cache_column == counter_cache_column && (inverse.polymorphic? || inverse.klass == active_record)
+            end
           end
           @inverse_which_updates_counter_cache_defined = true
         end
@@ -377,6 +382,7 @@ module ActiveRecord
         @klass         = options[:anonymous_class]
         @plural_name   = active_record.pluralize_table_names ?
                             name.to_s.pluralize : name.to_s
+        validate_reflection!
       end
 
       def autosave=(autosave)
@@ -427,6 +433,17 @@ module ActiveRecord
       private
         def derive_class_name
           name.to_s.camelize
+        end
+
+        def validate_reflection!
+          return unless options[:foreign_key].is_a?(Array)
+
+          message = <<~MSG.squish
+            Passing #{options[:foreign_key]} array to :foreign_key option
+            on the #{active_record}##{name} association is not supported.
+            Use the query_constraints: #{options[:foreign_key]} option instead to represent a composite foreign key.
+          MSG
+          raise ArgumentError, message
         end
     end
 
@@ -493,12 +510,19 @@ module ActiveRecord
         @join_table ||= -(options[:join_table]&.to_s || derive_join_table)
       end
 
-      def foreign_key
+      def foreign_key(infer_from_inverse_of: true)
         @foreign_key ||= if options[:query_constraints]
-          # composite foreign keys support
           options[:query_constraints].map { |fk| fk.to_s.freeze }.freeze
+        elsif options[:foreign_key]
+          options[:foreign_key].to_s
         else
-          -(options[:foreign_key]&.to_s || derive_foreign_key)
+          derived_fk = derive_foreign_key(infer_from_inverse_of: infer_from_inverse_of)
+
+          if active_record.has_query_constraints?
+            derived_fk = derive_fk_query_constraints(derived_fk)
+          end
+
+          derived_fk
         end
       end
 
@@ -518,8 +542,12 @@ module ActiveRecord
           else
             custom_primary_key.to_s.freeze
           end
-        elsif options[:query_constraints]
+        elsif active_record.has_query_constraints? || options[:query_constraints]
           active_record.query_constraints_list
+        elsif active_record.composite_primary_key?
+          # If active_record has composite primary key of shape [:<tenant_key>, :id], infer primary_key as :id
+          primary_key = primary_key(active_record)
+          primary_key.include?("id") ? "id" : primary_key.freeze
         else
           primary_key(active_record).freeze
         end
@@ -529,12 +557,24 @@ module ActiveRecord
         foreign_key
       end
 
+      def join_primary_type
+        type
+      end
+
       def join_foreign_key
         active_record_primary_key
       end
 
       def check_validity!
         check_validity_of_inverse!
+
+        if !polymorphic? && (klass.composite_primary_key? || active_record.composite_primary_key?)
+          if (has_one? || collection?) && Array(active_record_primary_key).length != Array(foreign_key).length
+            raise CompositePrimaryKeyMismatchError.new(self)
+          elsif belongs_to? && Array(association_primary_key).length != Array(foreign_key).length
+            raise CompositePrimaryKeyMismatchError.new(self)
+          end
+        end
       end
 
       def check_eager_loadable!
@@ -550,7 +590,7 @@ module ActiveRecord
       end
 
       def join_id_for(owner) # :nodoc:
-        Array(join_foreign_key).map { |key| owner[key] }
+        Array(join_foreign_key).map { |key| owner._read_attribute(key) }
       end
 
       def through_reflection
@@ -630,6 +670,10 @@ module ActiveRecord
 
       def polymorphic?
         options[:polymorphic]
+      end
+
+      def polymorphic_name
+        active_record.polymorphic_name
       end
 
       def add_as_source(seed)
@@ -726,15 +770,53 @@ module ActiveRecord
           class_name.camelize
         end
 
-        def derive_foreign_key
+        def derive_foreign_key(infer_from_inverse_of: true)
           if belongs_to?
             "#{name}_id"
           elsif options[:as]
             "#{options[:as]}_id"
-          elsif options[:inverse_of]
-            inverse_of.foreign_key
+          elsif options[:inverse_of] && infer_from_inverse_of
+            inverse_of.foreign_key(infer_from_inverse_of: false)
           else
             active_record.model_name.to_s.foreign_key
+          end
+        end
+
+        def derive_fk_query_constraints(foreign_key)
+          primary_query_constraints = active_record.query_constraints_list
+          owner_pk = active_record.primary_key
+
+          if primary_query_constraints.size != 2
+            raise ArgumentError, <<~MSG.squish
+              The query constraints list on the `#{active_record}` model has more than 2
+              attributes. Active Record is unable to derive the query constraints
+              for the association. You need to explicitly define the query constraints
+              for this association.
+            MSG
+          end
+
+          if !primary_query_constraints.include?(owner_pk)
+            raise ArgumentError, <<~MSG.squish
+              The query constraints on the `#{active_record}` model does not include the primary
+              key so Active Record is unable to derive the foreign key constraints for
+              the association. You need to explicitly define the query constraints for this
+              association.
+            MSG
+          end
+
+          first_key, last_key = primary_query_constraints
+
+          if first_key == owner_pk
+            [foreign_key, last_key.to_s]
+          elsif last_key == owner_pk
+            [first_key.to_s, foreign_key]
+          else
+            raise ArgumentError, <<~MSG.squish
+              Active Record couldn't correctly interpret the query constraints
+              for the `#{active_record}` model. The query constraints on `#{active_record}` are
+              `#{primary_query_constraints}` and the foreign key is `#{foreign_key}`.
+              You need to explicitly set the query constraints for this association.
+            MSG
           end
         end
 
@@ -786,10 +868,14 @@ module ActiveRecord
 
       # klass option is necessary to support loading polymorphic associations
       def association_primary_key(klass = nil)
-        if options[:query_constraints]
-          (klass || self.klass).query_constraints_list
-        elsif primary_key = options[:primary_key]
+        if primary_key = options[:primary_key]
           @association_primary_key ||= -primary_key.to_s
+        elsif !polymorphic? && ((klass || self.klass).has_query_constraints? || options[:query_constraints])
+          (klass || self.klass).composite_query_constraints_list
+        elsif (klass || self.klass).composite_primary_key?
+          # If klass has composite primary key of shape [:<tenant_key>, :id], infer primary_key as :id
+          primary_key = (klass || self.klass).primary_key
+          primary_key.include?("id") ? "id" : primary_key
         else
           primary_key(klass || self.klass)
         end

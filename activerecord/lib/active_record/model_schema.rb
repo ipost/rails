@@ -7,6 +7,13 @@ module ActiveRecord
     extend ActiveSupport::Concern
 
     ##
+    # :method: id_value
+    # :call-seq: id_value
+    #
+    # Returns the underlying column value for a column named "id". Useful when defining
+    # a composite primary key including an "id" column so that the value is readable.
+
+    ##
     # :singleton-method: primary_key_prefix_type
     # :call-seq: primary_key_prefix_type
     #
@@ -422,9 +429,10 @@ module ActiveRecord
         @columns ||= columns_hash.values.freeze
       end
 
-      def attribute_types # :nodoc:
-        load_schema
-        @attribute_types ||= Hash.new(Type.default_value)
+      def _returning_columns_for_insert # :nodoc:
+        @_returning_columns_for_insert ||= columns.filter_map do |c|
+          c.name if connection.return_value_after_insert?(c)
+        end
       end
 
       def yaml_encoder # :nodoc:
@@ -480,11 +488,6 @@ module ActiveRecord
         @column_defaults ||= _default_attributes.deep_dup.to_hash.freeze
       end
 
-      def _default_attributes # :nodoc:
-        load_schema
-        @default_attributes ||= ActiveModel::AttributeSet.new({})
-      end
-
       # Returns an array of column names as strings.
       def column_names
         @column_names ||= columns.map(&:name).freeze
@@ -512,7 +515,7 @@ module ActiveRecord
       # when just after creating a table you want to populate it with some default
       # values, e.g.:
       #
-      #  class CreateJobLevels < ActiveRecord::Migration[7.1]
+      #  class CreateJobLevels < ActiveRecord::Migration[7.2]
       #    def up
       #      create_table :job_levels do |t|
       #        t.integer :id
@@ -540,18 +543,31 @@ module ActiveRecord
         initialize_find_by_cache
       end
 
+      def load_schema # :nodoc:
+        return if schema_loaded?
+        @load_schema_monitor.synchronize do
+          return if @columns_hash
+
+          load_schema!
+
+          @schema_loaded = true
+        rescue
+          reload_schema_from_cache # If the schema loading failed half way through, we must reset the state.
+          raise
+        end
+      end
+
       protected
         def initialize_load_schema_monitor
           @load_schema_monitor = Monitor.new
         end
 
         def reload_schema_from_cache(recursive = true)
+          @_returning_columns_for_insert = nil
           @arel_table = nil
           @column_names = nil
           @symbol_column_to_string_name_hash = nil
-          @attribute_types = nil
           @content_columns = nil
-          @default_attributes = nil
           @column_defaults = nil
           @attributes_builder = nil
           @columns = nil
@@ -580,20 +596,6 @@ module ActiveRecord
           defined?(@schema_loaded) && @schema_loaded
         end
 
-        def load_schema
-          return if schema_loaded?
-          @load_schema_monitor.synchronize do
-            return if @columns_hash
-
-            load_schema!
-
-            @schema_loaded = true
-          rescue
-            reload_schema_from_cache # If the schema loading failed half way through, we must reset the state.
-            raise
-          end
-        end
-
         def load_schema!
           unless table_name
             raise ActiveRecord::TableNotSpecified, "#{self} has no table configured. Set one with #{self}.table_name="
@@ -602,16 +604,7 @@ module ActiveRecord
           columns_hash = connection.schema_cache.columns_hash(table_name)
           columns_hash = columns_hash.except(*ignored_columns) unless ignored_columns.empty?
           @columns_hash = columns_hash.freeze
-          @columns_hash.each do |name, column|
-            type = connection.lookup_cast_type_from_column(column)
-            type = _convert_type_from_options(type)
-            define_attribute(
-              name,
-              type,
-              default: column.default,
-              user_provided_default: false
-            )
-          end
+          alias_attribute :id_value, :id if @columns_hash.key?("id")
 
           super
         end
@@ -639,12 +632,14 @@ module ActiveRecord
           end
         end
 
-        def _convert_type_from_options(type)
+        def type_for_column(column)
+          type = connection.lookup_cast_type_from_column(column)
+
           if immutable_strings_by_default && type.respond_to?(:to_immutable_string)
-            type.to_immutable_string
-          else
-            type
+            type = type.to_immutable_string
           end
+
+          type
         end
     end
   end

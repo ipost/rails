@@ -4,6 +4,8 @@ require "weakref"
 require "active_support/ruby_features"
 
 module ActiveSupport
+  # = Active Support Descendants Tracker
+  #
   # This module provides an internal implementation to track descendants
   # which is faster than iterating through +ObjectSpace+.
   #
@@ -64,8 +66,6 @@ module ActiveSupport
       end
     end
 
-    include ReloadedClassesFiltering
-
     class << self
       def disable_clear! # :nodoc:
         unless @clear_disabled
@@ -107,7 +107,7 @@ module ActiveSupport
       end
 
       def descendants
-        subclasses = self.subclasses
+        subclasses = DescendantsTracker.reject!(self.subclasses)
         subclasses.concat(subclasses.flat_map(&:descendants))
       end
     else

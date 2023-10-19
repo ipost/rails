@@ -1083,7 +1083,7 @@ class RenderTest < ActionController::TestCase
   end
 
   def test_should_render_formatted_html_erb_template_with_bad_accepts_header
-    @request.env["HTTP_ACCEPT"] = "; a=dsf"
+    @request.env["HTTP_ACCEPT"] = "; q=dsf"
     get :formatted_xml_erb
     assert_equal "<test>passed formatted HTML erb</test>", @response.body
   end
@@ -1347,7 +1347,7 @@ class RenderTest < ActionController::TestCase
     get :partial_with_form_builder_and_invalid_model
 
     assert_equal <<~HTML.strip, @response.body.strip
-      <div class="field_with_errors"><label for="post_title">Title</label> <span class="error">can’t be blank</span></div>
+      <div class="field_with_errors"><label for="post_title">Title</label> <span class="error">can&#39;t be blank</span></div>
     HTML
   ensure
     ActionView::Base.field_error_proc = old_proc if old_proc
@@ -1497,7 +1497,7 @@ class RenderTest < ActionController::TestCase
     end
 
     assert_not_includes @response.body, "BEGIN"
-    assert_equal @response.body.split("\n").length, 1
+    assert_equal 1, @response.body.split("\n").length
   end
 
   def test_line_offset_with_annotations_enabled

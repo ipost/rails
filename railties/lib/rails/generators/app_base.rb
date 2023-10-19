@@ -16,6 +16,11 @@ module Rails
       include AppName
 
       NODE_LTS_VERSION = "18.15.0"
+      BUN_VERSION = "1.0.1"
+
+      JAVASCRIPT_OPTIONS = %w( importmap bun webpack esbuild rollup )
+      CSS_OPTIONS = %w( tailwind bootstrap bulma postcss sass )
+      ASSET_PIPELINE_OPTIONS = %w( none sprockets propshaft )
 
       attr_accessor :rails_template
       add_shebang_option!
@@ -34,7 +39,8 @@ module Rails
                                            desc: "Path to some #{name} template (can be a filesystem path or URL)"
 
         class_option :database,            type: :string, aliases: "-d", default: "sqlite3",
-                                           desc: "Preconfigure for selected database (options: #{DATABASES.join('/')})"
+                                           enum: DATABASES,
+                                           desc: "Preconfigure for selected database"
 
         class_option :skip_git,            type: :boolean, aliases: "-G", default: nil,
                                            desc: "Skip git init, .gitignore and .gitattributes"
@@ -70,7 +76,8 @@ module Rails
         class_option :skip_asset_pipeline, type: :boolean, aliases: "-A", default: nil
 
         class_option :asset_pipeline,      type: :string, aliases: "-a", default: "sprockets",
-                                           desc: "Choose your asset pipeline [options: sprockets (default), propshaft]"
+                                           enum: ASSET_PIPELINE_OPTIONS,
+                                           desc: "Choose your asset pipeline"
 
         class_option :skip_javascript,     type: :boolean, aliases: ["-J", "--skip-js"], default: (true if name == "plugin"),
                                            desc: "Skip JavaScript files"
@@ -247,15 +254,13 @@ module Rails
 
       def set_default_accessors! # :doc:
         self.destination_root = File.expand_path(app_path, destination_root)
-        self.rails_template = \
-          case options[:template]
-          when /^https?:\/\//
-            options[:template]
-          when String
-            File.expand_path(`echo #{options[:template]}`.strip)
-          else
-            options[:template]
-          end
+
+        if options[:template].is_a?(String) && !options[:template].match?(/^https?:\/\//)
+          interpolated = options[:template].gsub(/\$(\w+)|\$\{\g<1>\}|%\g<1>%/) { |m| ENV[$1] || m }
+          self.rails_template = File.expand_path(interpolated)
+        else
+          self.rails_template = options[:template]
+        end
       end
 
       def database_gemfile_entry # :doc:
@@ -271,7 +276,7 @@ module Rails
       end
 
       def asset_pipeline_gemfile_entry
-        return if options[:skip_asset_pipeline]
+        return if skip_asset_pipeline?
 
         if options[:asset_pipeline] == "sprockets"
           GemfileEntry.floats "sprockets-rails",
@@ -335,11 +340,19 @@ module Rails
       end
 
       def sqlite3? # :doc:
-        !options[:skip_active_record] && options[:database] == "sqlite3"
+        !skip_active_record? && options[:database] == "sqlite3"
+      end
+
+      def skip_active_record? # :doc:
+        options[:skip_active_record]
       end
 
       def skip_active_storage? # :doc:
         options[:skip_active_storage]
+      end
+
+      def skip_action_cable? # :doc:
+        options[:skip_action_cable]
       end
 
       def skip_action_mailer? # :doc:
@@ -354,12 +367,16 @@ module Rails
         options[:skip_action_text]
       end
 
+      def skip_asset_pipeline? # :doc:
+        options[:skip_asset_pipeline]
+      end
+
       def skip_sprockets?
-        options[:skip_asset_pipeline] || options[:asset_pipeline] != "sprockets"
+        skip_asset_pipeline? || options[:asset_pipeline] != "sprockets"
       end
 
       def skip_propshaft?
-        options[:skip_asset_pipeline] || options[:asset_pipeline] != "propshaft"
+        skip_asset_pipeline? || options[:asset_pipeline] != "propshaft"
       end
 
 
@@ -441,7 +458,7 @@ module Rails
       def javascript_gemfile_entry
         return if options[:skip_javascript]
 
-        if adjusted_javascript_option == "importmap"
+        if options[:javascript] == "importmap"
           GemfileEntry.floats "importmap-rails", "Use JavaScript with ESM import maps [https://github.com/rails/importmap-rails]"
         else
           GemfileEntry.floats "jsbundling-rails", "Bundle and transpile JavaScript [https://github.com/rails/jsbundling-rails]"
@@ -460,8 +477,17 @@ module Rails
         [ turbo_rails_entry, stimulus_rails_entry ]
       end
 
+      def using_js_runtime?
+        (options[:javascript] && !%w[importmap].include?(options[:javascript])) ||
+          (options[:css] && !%w[tailwind sass].include?(options[:css]))
+      end
+
       def using_node?
-        options[:javascript] && options[:javascript] != "importmap"
+        using_js_runtime? && !%w[bun].include?(options[:javascript])
+      end
+
+      def using_bun?
+        using_js_runtime? && %w[bun].include?(options[:javascript])
       end
 
       def node_version
@@ -478,6 +504,12 @@ module Rails
         using_node? and `yarn --version`[/\d+\.\d+\.\d+/]
       rescue
         "latest"
+      end
+
+      def dockerfile_bun_version
+        using_bun? and `bun --version`[/\d+\.\d+\.\d+/]
+      rescue
+        BUN_VERSION
       end
 
       def dockerfile_binfile_fixups
@@ -511,17 +543,21 @@ module Rails
 
       def dockerfile_build_packages
         # start with the essentials
-        packages = %w(build-essential git)
+        packages = %w(build-essential git pkg-config)
 
-        # add databases: sqlite3, postgres, mysql
-        packages += %w(pkg-config libpq-dev default-libmysqlclient-dev)
+        # add database support
+        packages << build_package_for_database unless skip_active_record?
 
         # ActiveStorage preview support
         packages << "libvips" unless skip_active_storage?
 
+        packages << "curl" if using_js_runtime?
+
+        packages << "unzip" if using_bun?
+
         # node support, including support for building native modules
         if using_node?
-          packages += %w(curl node-gyp) # pkg-config already listed above
+          packages << "node-gyp" # pkg-config already listed above
 
           # module build process depends on Python, and debian changed
           # how python is installed with the bullseye release.  Below
@@ -543,35 +579,28 @@ module Rails
           end
         end
 
-        packages.sort
+        packages.compact.sort
       end
 
       def dockerfile_deploy_packages
-        # start with databases: sqlite3, postgres, mysql
-        packages = %w(libsqlite3-0 postgresql-client default-mysql-client)
+        # Add curl to work with the default healthcheck strategy in Kamal
+        packages = ["curl"]
+
+        # ActiveRecord databases
+        packages << deploy_package_for_database unless skip_active_record?
 
         # ActiveStorage preview support
         packages << "libvips" unless skip_active_storage?
 
-        packages.sort
-      end
-
-      # CSS processors other than Tailwind and Sass require a node-based JavaScript environment. So overwrite the normal JS default
-      # if one such processor has been specified.
-      def adjusted_javascript_option
-        if options[:css] && options[:css] != "tailwind" && options[:css] != "sass" && options[:javascript] == "importmap"
-          "esbuild"
-        else
-          options[:javascript]
-        end
+        packages.compact.sort
       end
 
       def css_gemfile_entry
         return unless options[:css]
 
-        if !using_node? && options[:css] == "tailwind"
+        if !using_js_runtime? && options[:css] == "tailwind"
           GemfileEntry.floats "tailwindcss-rails", "Use Tailwind CSS [https://github.com/rails/tailwindcss-rails]"
-        elsif !using_node? && options[:css] == "sass"
+        elsif !using_js_runtime? && options[:css] == "sass"
           GemfileEntry.floats "dartsass-rails", "Use Dart SASS [https://github.com/rails/dartsass-rails]"
         else
           GemfileEntry.floats "cssbundling-rails", "Bundle and process CSS [https://github.com/rails/cssbundling-rails]"
@@ -669,9 +698,9 @@ module Rails
       def run_javascript
         return if options[:skip_javascript] || !bundle_install?
 
-        case adjusted_javascript_option
-        when "importmap"                    then rails_command "importmap:install"
-        when "webpack", "esbuild", "rollup" then rails_command "javascript:install:#{adjusted_javascript_option}"
+        case options[:javascript]
+        when "importmap"                           then rails_command "importmap:install"
+        when "webpack", "bun", "esbuild", "rollup" then rails_command "javascript:install:#{options[:javascript]}"
         end
       end
 
@@ -684,9 +713,9 @@ module Rails
       def run_css
         return if !options[:css] || !bundle_install?
 
-        if !using_node? && options[:css] == "tailwind"
+        if !using_js_runtime? && options[:css] == "tailwind"
           rails_command "tailwindcss:install"
-        elsif !using_node? && options[:css] == "sass"
+        elsif !using_js_runtime? && options[:css] == "sass"
           rails_command "dartsass:install"
         else
           rails_command "css:install:#{options[:css]}"
@@ -726,6 +755,15 @@ module Rails
 
       def edge_branch
         self.class.edge_branch
+      end
+
+      def dockerfile_chown_directories
+        directories = %w(log tmp)
+
+        directories << "storage" unless skip_active_storage? && !sqlite3?
+        directories << "db" unless skip_active_record?
+
+        directories.sort
       end
     end
   end

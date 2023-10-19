@@ -16,11 +16,13 @@ require "active_support/core_ext/integer/time"
 class ActiveModel::TestCase < ActiveSupport::TestCase
   include ActiveSupport::Testing::MethodCallAssertions
 
-  private
-    # Skips the current run on JRuby using Minitest::Assertions#skip
-    def jruby_skip(message = "")
-      skip message if defined?(JRUBY_VERSION)
-    end
+  class AssertionlessTest < StandardError; end
+
+  def after_teardown
+    super
+
+    raise AssertionlessTest, "No assertions made." if passed? && assertions.zero?
+  end
 end
 
 require_relative "../../../tools/test_common"

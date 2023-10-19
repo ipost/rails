@@ -2,11 +2,11 @@
 
 require "active_support/core_ext/enumerable"
 require "active_support/core_ext/module/delegation"
-require "active_support/core_ext/string/filters"
 require "active_support/parameter_filter"
 require "concurrent/map"
 
 module ActiveRecord
+  # = Active Record \Core
   module Core
     extend ActiveSupport::Concern
     include ActiveModel::Access
@@ -39,10 +39,10 @@ module ActiveRecord
       # :singleton-method:
       #
       # Specifies the maximum number of records that will be destroyed in a
-      # single background job by the +dependent: :destroy_async+ association
-      # option. When +nil+ (default), all dependent records will be destroyed
-      # in a single background job. If specified, the records to be destroyed
-      # will be split into multiple background jobs.
+      # single background job by the <tt>dependent: :destroy_async</tt>
+      # association option. When +nil+ (default), all dependent records will be
+      # destroyed in a single background job. If specified, the records to be
+      # destroyed will be split into multiple background jobs.
       class_attribute :destroy_association_async_batch_size, instance_writer: false, instance_predicate: false, default: nil
 
       ##
@@ -344,12 +344,7 @@ module ActiveRecord
         end
       end
 
-      # Override the default class equality method to provide support for decorated models.
-      def ===(object) # :nodoc:
-        object.is_a?(self)
-      end
-
-      # Returns an instance of <tt>Arel::Table</tt> loaded with the current table name.
+      # Returns an instance of +Arel::Table+ loaded with the current table name.
       def arel_table # :nodoc:
         @arel_table ||= Arel::Table.new(table_name, klass: self)
       end
@@ -433,7 +428,7 @@ module ActiveRecord
       init_internals
       initialize_internals_callback
 
-      assign_attributes(attributes) if attributes
+      super
 
       yield self if block_given?
       _run_initialize_callbacks
@@ -541,6 +536,27 @@ module ActiveRecord
       coder["active_record_yaml_version"] = 2
     end
 
+    ##
+    # :method: slice
+    #
+    # :call-seq: slice(*methods)
+    #
+    # Returns a hash of the given methods with their names as keys and returned
+    # values as values.
+    #
+    #--
+    # Implemented by ActiveModel::Access#slice.
+
+    ##
+    # :method: values_at
+    #
+    # :call-seq: values_at(*methods)
+    #
+    # Returns an array of the values returned by the given methods.
+    #
+    #--
+    # Implemented by ActiveModel::Access#values_at.
+
     # Returns true if +comparison_object+ is the same exact object, or +comparison_object+
     # is of the same type and +self+ has an ID and it is equal to +comparison_object.id+.
     #
@@ -551,12 +567,10 @@ module ActiveRecord
     # Note also that destroying a record preserves its ID in the model instance, so deleted
     # models are still comparable.
     def ==(comparison_object)
-      return super if new_record?
       super ||
         comparison_object.instance_of?(self.class) &&
         primary_key_values_present? &&
-        comparison_object.id == id &&
-        !comparison_object.new_record?
+        comparison_object.id == id
     end
     alias :eql? :==
 
@@ -565,8 +579,8 @@ module ActiveRecord
     def hash
       id = self.id
 
-      if primary_key_values_present? && !new_record?
-        [self.class, id].hash
+      if primary_key_values_present?
+        self.class.hash ^ id.hash
       else
         super
       end
@@ -617,7 +631,9 @@ module ActiveRecord
     #
     #   user = User.first
     #   user.strict_loading! # => true
-    #   user.comments
+    #   user.address.city
+    #   => ActiveRecord::StrictLoadingViolationError
+    #   user.comments.to_a
     #   => ActiveRecord::StrictLoadingViolationError
     #
     # ==== Parameters
@@ -631,12 +647,13 @@ module ActiveRecord
     #
     #   user = User.first
     #   user.strict_loading!(false) # => false
-    #   user.comments
-    #   => #<ActiveRecord::Associations::CollectionProxy>
+    #   user.address.city # => "Tatooine"
+    #   user.comments.to_a # => [#<Comment:0x00...]
     #
     #   user.strict_loading!(mode: :n_plus_one_only)
     #   user.address.city # => "Tatooine"
-    #   user.comments
+    #   user.comments.to_a # => [#<Comment:0x00...]
+    #   user.comments.first.ratings.to_a
     #   => ActiveRecord::StrictLoadingViolationError
     def strict_loading!(value = true, mode: :all)
       unless [:all, :n_plus_one_only].include?(mode)
@@ -705,27 +722,6 @@ module ActiveRecord
       end
     end
 
-    ##
-    # :method: slice
-    #
-    # :call-seq: slice(*methods)
-    #
-    # Returns a hash of the given methods with their names as keys and returned
-    # values as values.
-    #
-    #--
-    # Implemented by ActiveModel::Access#slice.
-
-    ##
-    # :method: values_at
-    #
-    # :call-seq: values_at(*methods)
-    #
-    # Returns an array of the values returned by the given methods.
-    #
-    #--
-    # Implemented by ActiveModel::Access#values_at.
-
     private
       # +Array#flatten+ will call +#to_ary+ (recursively) on each of the elements of
       # the array, and then rescues from the possible +NoMethodError+. If those elements are
@@ -754,6 +750,7 @@ module ActiveRecord
         @strict_loading_mode = :all
 
         klass.define_attribute_methods
+        klass.generate_alias_attributes
       end
 
       def initialize_internals_callback

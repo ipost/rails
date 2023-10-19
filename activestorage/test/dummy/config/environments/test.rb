@@ -29,7 +29,7 @@ Rails.application.configure do
   config.cache_store = :null_store
 
   # Raise exceptions instead of rendering exception templates.
-  config.action_dispatch.show_exceptions = false
+  config.action_dispatch.show_exceptions = :rescuable
 
   # Disable request forgery protection in test environment.
   config.action_controller.allow_forgery_protection = false
@@ -45,7 +45,7 @@ Rails.application.configure do
   end
   # Azure service tests are currently failing on the main branch.
   # We temporarily disable them while we get things working again.
-  if ENV["CI"]
+  if ENV["BUILDKITE"]
     SERVICE_CONFIGURATIONS.delete(:azure)
     SERVICE_CONFIGURATIONS.delete(:azure_public)
   end

@@ -80,6 +80,18 @@ class MimeTypeTest < ActiveSupport::TestCase
     assert_equal expect, Mime::Type.parse(accept)
   end
 
+  test "parse arbitrary media type parameters with comma" do
+    accept = 'multipart/form-data; boundary="simple, boundary"'
+    expect = [Mime[:multipart_form]]
+    assert_equal expect, Mime::Type.parse(accept)
+  end
+
+  test "parse arbitrary media type parameters with comma and additional media type" do
+    accept = 'multipart/form-data; boundary="simple, boundary", text/xml'
+    expect = [Mime[:multipart_form], Mime[:xml]]
+    assert_equal expect, Mime::Type.parse(accept)
+  end
+
   # Accept header send with user HTTP_USER_AGENT: Sunrise/0.42j (Windows XP)
   test "parse broken acceptlines" do
     accept = "text/xml,application/xml,application/xhtml+xml,text/html;q=0.9,text/plain;q=0.8,image/*,,*/*;q=0.5"
@@ -111,6 +123,15 @@ class MimeTypeTest < ActiveSupport::TestCase
     Mime::Type.unregister(:foobar)
   end
 
+  test "custom type with url parameter" do
+    accept = 'application/vnd.api+json; profile="https://jsonapi.org/profiles/example"'
+    type = Mime::Type.register(accept, :example_api)
+    assert_equal type, Mime[:example_api]
+    assert_equal [type], Mime::Type.parse(accept)
+  ensure
+    Mime::Type.unregister(:example_api)
+  end
+
   test "register callbacks" do
     registered_mimes = []
     Mime::Type.register_callback do |mime|
@@ -140,8 +161,8 @@ class MimeTypeTest < ActiveSupport::TestCase
   end
 
   test "type should be equal to symbol" do
-    assert_equal Mime[:html], "application/xhtml+xml"
-    assert_equal Mime[:html], :html
+    assert_operator Mime[:html], :==, "application/xhtml+xml"
+    assert_operator Mime[:html], :==, :html
   end
 
   test "type convenience methods" do

@@ -197,17 +197,17 @@ To render a partial as part of a view, you use the `render` method within the vi
 This will render a file named `_menu.html.erb` at that point within the view that is being rendered. Note the leading underscore character: partials are named with a leading underscore to distinguish them from regular views, even though they are referred to without the underscore. This holds true even when you're pulling in a partial from another folder:
 
 ```erb
-<%= render "shared/menu" %>
+<%= render "application/menu" %>
 ```
 
-That code will pull in the partial from `app/views/shared/_menu.html.erb`.
+That code will pull in the partial from `app/views/application/_menu.html.erb`.
 
 ### Using Partials to Simplify Views
 
 One way to use partials is to treat them as the equivalent of subroutines; a way to move details out of a view so that you can grasp what's going on more easily. For example, you might have a view that looks like this:
 
 ```html+erb
-<%= render "shared/ad_banner" %>
+<%= render "application/ad_banner" %>
 
 <h1>Products</h1>
 
@@ -216,10 +216,137 @@ One way to use partials is to treat them as the equivalent of subroutines; a way
   <%= render partial: "product", locals: { product: product } %>
 <% end %>
 
-<%= render "shared/footer" %>
+<%= render "application/footer" %>
 ```
 
 Here, the `_ad_banner.html.erb` and `_footer.html.erb` partials could contain content that is shared among many pages in your application. You don't need to see the details of these sections when you're concentrating on a particular page.
+
+TIP: View partials rely on the same [Template
+Inheritance](/layouts_and_rendering.html#template-inheritance) as templates and
+layouts, so templates rendered by controllers that inherit from
+`ApplicationController` can render view partials declared in
+`app/views/application`.
+
+In addition to resolving partials with the inheritance chain, controllers can
+also override default partials with the inheritance chain. For example, a
+`ProductsController` that inherits from `ApplicationController` will resolve a
+call to `<%= render "ad_banner" %>` by first searching for
+`app/views/products/_ad_banner.html.erb` before falling back to
+`app/views/application/_ad_banner.html.erb`.
+
+### `render` with `locals` Option
+
+When rendering a partial, each key in the `locals:` option is available as a
+partial-local variable:
+
+```html+erb
+<%# app/views/products/show.html.erb %>
+
+<%= render partial: "products/product", locals: { product: @product } %>
+
+<%# app/views/products/_product.html.erb %>
+
+<%= tag.div id: dom_id(product) do %>
+  <h1><%= product.name %></h1>
+<% end %>
+```
+
+If a template refers to a variable that isn't passed into the view as part of
+the `locals:` option, the template will raise an `ActionView::Template::Error`:
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+
+<%= tag.div id: dom_id(product) do %>
+  <h1><%= product.name %></h1>
+
+  <%# => raises ActionView::Template::Error %>
+  <% related_products.each do |related_product| %>
+    <%# ... %>
+  <% end %>
+<% end %>
+```
+
+### Using `local_assigns`
+
+Each key in the `locals:` option is available as a partial-local variable through the [local_assigns][] helper method:
+
+```html+erb
+<%# app/views/products/show.html.erb %>
+
+<%= render partial: "products/product", locals: { product: @product } %>
+
+<%# app/views/products/_product.html.erb %>
+
+<% local_assigns[:product]          # => "#<Product:0x0000000109ec5d10>" %>
+<% local_assigns[:options]          # => nil %>
+```
+
+Since `local_assigns` is a `Hash`, it's compatible with [Ruby 3.1's pattern matching assignment operator](https://docs.ruby-lang.org/en/master/syntax/pattern_matching_rdoc.html):
+
+```ruby
+local_assigns => { product:, **options }
+product # => "#<Product:0x0000000109ec5d10>"
+options # => {}
+```
+
+When keys other than `:product` are assigned into a partial-local `Hash`
+variable, they can be splatted into helper method calls:
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+
+<% local_assigns => { product:, **options } %>
+
+<%= tag.div id: dom_id(product), **options do %>
+  <h1><%= product.name %></h1>
+<% end %>
+
+<%# app/views/products/show.html.erb %>
+
+<%= render "products/product", product: @product, class: "card" %>
+<%# => <div id="product_1" class="card">
+  #      <h1>A widget</h1>
+  #    </div>
+%>
+```
+
+Pattern matching assignment also supports variable renaming:
+
+```ruby
+local_assigns => { product: record }
+product             # => "#<Product:0x0000000109ec5d10>"
+record              # => "#<Product:0x0000000109ec5d10>"
+product == record   # => true
+```
+
+Since `local_assigns` returns a `Hash` instance, you can conditionally read a variable, then fall back to a default value when the key isn't part of the `locals:` options:
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+
+<% local_assigns.fetch(:related_products, []).each do |related_product| %>
+  <%# ... %>
+<% end %>
+```
+
+Combining Ruby 3.1's pattern matching assignment with calls to [Hash#with_defaults](https://api.rubyonrails.org/classes/Hash.html#method-i-with_defaults) enables compact partial-local default variable assignments:
+
+```html+erb
+<%# app/views/products/_product.html.erb %>
+
+<% local_assigns.with_defaults(related_products: []) => { product:, related_products: } %>
+
+<%= tag.div id: dom_id(product) do %>
+  <h1><%= product.name %></h1>
+
+  <% related_products.each do |related_product| %>
+    <%# ... %>
+  <% end %>
+<% end %>
+```
+
+[local_assigns]: https://api.rubyonrails.org/classes/ActionView/Template.html#method-i-local_assigns
 
 ### `render` without `partial` and `locals` Options
 

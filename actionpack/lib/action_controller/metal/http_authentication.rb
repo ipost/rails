@@ -316,7 +316,7 @@ module ActionController
       # of this document.
       #
       # The nonce is opaque to the client. Composed of Time, and hash of Time with secret
-      # key from the Rails session secret generated upon creation of project. Ensures
+      # key from the \Rails session secret generated upon creation of project. Ensures
       # the time cannot be modified by client.
       def nonce(secret_key, time = Time.now)
         t = time.to_i
@@ -424,7 +424,9 @@ module ActionController
 
       module ControllerMethods
         # Authenticate using an HTTP Bearer token, or otherwise render an HTTP
-        # header requesting the client to send a Bearer token.
+        # header requesting the client to send a Bearer token. For the authentication
+        # to be considered successful, +login_procedure+ should return a non-nil
+        # value. Typically, the authenticated user is returned.
         #
         # See ActionController::HttpAuthentication::Token for example usage.
         def authenticate_or_request_with_http_token(realm = "Application", message = nil, &login_procedure)
@@ -432,8 +434,8 @@ module ActionController
         end
 
         # Authenticate using an HTTP Bearer token.
-        # Returns the return value of <tt>login_procedure</tt> if a
-        # token is found. Returns <tt>nil</tt> if no token is found.
+        # Returns the return value of +login_procedure+ if a
+        # token is found. Returns +nil+ if no token is found.
         #
         # See ActionController::HttpAuthentication::Token for example usage.
         def authenticate_with_http_token(&login_procedure)
@@ -450,8 +452,8 @@ module ActionController
       # If token Authorization header is present, call the login
       # procedure with the present token and options.
       #
-      # Returns the return value of <tt>login_procedure</tt> if a
-      # token is found. Returns <tt>nil</tt> if no token is found.
+      # Returns the return value of +login_procedure+ if a
+      # token is found. Returns +nil+ if no token is found.
       #
       # ==== Parameters
       #
@@ -513,6 +515,7 @@ module ActionController
       # delimiters defined in +AUTHN_PAIR_DELIMITERS+.
       def raw_params(auth)
         _raw_params = auth.sub(TOKEN_REGEX, "").split(WHITESPACED_AUTHN_PAIR_DELIMITERS)
+        _raw_params.reject!(&:empty?)
 
         if !_raw_params.first&.start_with?(TOKEN_KEY)
           _raw_params[0] = "#{TOKEN_KEY}#{_raw_params.first}"

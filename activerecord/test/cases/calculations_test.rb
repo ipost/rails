@@ -24,7 +24,7 @@ require "models/rating"
 require "models/too_long_table_name"
 require "support/stubs/strong_parameters"
 require "support/async_helper"
-require "models/cpk/book"
+require "models/cpk"
 
 class CalculationsTest < ActiveRecord::TestCase
   include AsyncHelper
@@ -392,6 +392,17 @@ class CalculationsTest < ActiveRecord::TestCase
     assert_equal({ 6 => 2 }, Account.group(:firm_id).distinct.order("1 DESC").limit(1).count)
   end
 
+  def test_count_for_a_composite_primary_key_model
+    book = cpk_books(:cpk_great_author_first_book)
+    assert_equal(1, Cpk::Book.where(author_id: book.author_id, id: book.id).count)
+  end
+
+  def test_group_by_count_for_a_composite_primary_key_model
+    book = cpk_books(:cpk_great_author_first_book)
+    expected = { book.author_id => Cpk::Book.where(author_id: book.author_id).count }
+    assert_equal(expected, Cpk::Book.where(author_id: book.author_id).group(:author_id).count)
+  end
+
   def test_should_group_by_summed_field_having_condition
     c = Account.group(:firm_id).having("sum(credit_limit) > 50").sum(:credit_limit)
     assert_nil        c[1]
@@ -400,7 +411,7 @@ class CalculationsTest < ActiveRecord::TestCase
   end
 
   def test_should_group_by_summed_field_having_condition_from_select
-    skip unless current_adapter?(:Mysql2Adapter, :SQLite3Adapter)
+    skip unless current_adapter?(:Mysql2Adapter, :TrilogyAdapter, :SQLite3Adapter)
     c = Account.select("MIN(credit_limit) AS min_credit_limit").group(:firm_id).having("min_credit_limit > 50").sum(:credit_limit)
     assert_nil       c[1]
     assert_equal 60, c[2]
@@ -801,10 +812,10 @@ class CalculationsTest < ActiveRecord::TestCase
   def test_distinct_is_honored_when_used_with_count_operation_after_group
     # Count the number of authors for approved topics
     approved_topics_count = Topic.group(:approved).count(:author_name)[true]
-    assert_equal approved_topics_count, 4
+    assert_equal 4, approved_topics_count
     # Count the number of distinct authors for approved Topics
     distinct_authors_for_approved_count = Topic.group(:approved).distinct.count(:author_name)[true]
-    assert_equal distinct_authors_for_approved_count, 3
+    assert_equal 3, distinct_authors_for_approved_count
   end
 
   def test_pluck
@@ -941,14 +952,18 @@ class CalculationsTest < ActiveRecord::TestCase
     assert_equal Company.all.map(&:id).sort, Company.all.ids.sort
   end
 
-  def ids_for_a_composite_primary_key
+  def test_ids_for_a_composite_primary_key
     assert_equal Cpk::Book.all.map(&:id).sort, Cpk::Book.all.ids.sort
+  end
+
+  def test_pluck_for_a_composite_primary_key
+    assert_equal Cpk::Book.all.pluck([:author_id, :id]).sort, Cpk::Book.all.ids.sort
   end
 
   def test_ids_for_a_composite_primary_key_with_scope
     book = cpk_books(:cpk_great_author_first_book)
 
-    assert_equal [[book.author_id, book.number]], Cpk::Book.all.where(title: book.title).ids
+    assert_equal [book.id], Cpk::Book.all.where(title: book.title).ids
   end
 
   def test_ids_for_a_composite_primary_key_on_loaded_relation
@@ -957,7 +972,7 @@ class CalculationsTest < ActiveRecord::TestCase
     relation.to_a
 
     assert_predicate relation, :loaded?
-    assert_equal [[book.author_id, book.number]], relation.ids
+    assert_equal [book.id], relation.ids
   end
 
   def test_ids_with_scope
@@ -1032,6 +1047,12 @@ class CalculationsTest < ActiveRecord::TestCase
     company = Company.first
     5.times { company.contracts.create! }
     assert_equal Company.all.map(&:id).sort, Company.all.includes(:contracts).ids.sort
+  end
+
+  def test_ids_with_includes_and_non_primary_key_order
+    rating = 1
+    Company.all.each { |company| company.update!(rating: rating += 1) }
+    assert_equal Company.all.sort_by(&:rating).map(&:id), Company.includes(:comments).order(:rating).ids
   end
 
   def test_ids_with_includes_and_scope
@@ -1182,7 +1203,7 @@ class CalculationsTest < ActiveRecord::TestCase
 
   def test_pluck_functions_without_alias
     expected = if current_adapter?(:PostgreSQLAdapter)
-      # Postgres returns the same name for each column in the given query, so each column is named "coalesce"
+      # PostgreSQL returns the same name for each column in the given query, so each column is named "coalesce"
       # As a result Rails cannot accurately type cast each value.
       # To work around this, you should use aliases in your select statement (see test_pluck_functions_with_alias).
       [

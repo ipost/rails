@@ -1,6 +1,5 @@
 # frozen_string_literal: true
 
-require "mutex_m"
 require "active_support/core_ext/module/delegation"
 
 module ActiveRecord
@@ -67,10 +66,10 @@ module ActiveRecord
     end
 
     class GeneratedRelationMethods < Module # :nodoc:
-      include Mutex_m
+      MUTEX = Mutex.new
 
       def generate_method(method)
-        synchronize do
+        MUTEX.synchronize do
           return if method_defined?(method)
 
           if /\A[a-zA-Z_]\w*[!?]?\z/.match?(method) && !DELEGATION_RESERVED_METHOD_NAMES.include?(method.to_s)
@@ -97,7 +96,7 @@ module ActiveRecord
     # may vary depending on the klass of a relation, so we create a subclass of Relation
     # for each different klass, and the delegations are compiled into that subclass only.
 
-    delegate :to_xml, :encode_with, :length, :each, :join,
+    delegate :to_xml, :encode_with, :length, :each, :join, :intersect?,
              :[], :&, :|, :+, :-, :sample, :reverse, :rotate, :compact, :in_groups, :in_groups_of,
              :to_sentence, :to_fs, :to_formatted_s, :as_json,
              :shuffle, :split, :slice, :index, :rindex, to: :records
